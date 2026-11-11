@@ -45,6 +45,8 @@ export async function withRetry(fn, { tries = 6, onWait, signal } = {}) {
 
 export class Tg {
   constructor(apiId, apiHash, session = '') {
+    this.apiId = Number(apiId);
+    this.apiHash = String(apiHash);
     this.client = new TelegramClient(new StringSession(session), Number(apiId), String(apiHash), {
       connectionRetries: 10,
       retryDelay: 1500,
@@ -77,6 +79,11 @@ export class Tg {
   /** Interactive login. Callbacks return promises resolved by the UI. */
   async login({ phoneNumber, phoneCode, password, onError }) {
     await this.client.start({ phoneNumber, phoneCode, password, onError });
+  }
+
+  /** Login by scanning a QR code with the Telegram app. qrCode({ token, expires }) renders it. */
+  async loginQr({ qrCode, password, onError }) {
+    await this.client.signInUserWithQrCode({ apiId: this.apiId, apiHash: this.apiHash }, { qrCode, password, onError });
   }
 
   async me() {

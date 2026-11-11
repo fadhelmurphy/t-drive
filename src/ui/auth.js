@@ -77,21 +77,84 @@ export async function askApiCredentials(error) {
   return { apiId: Number(apiId), apiHash };
 }
 
-/** Wire GramJS's interactive login to our forms. */
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Login: QR code first (scan with the Telegram app), phone number as fallback. */
 export async function runLogin(tg) {
-  let lastError = '';
+  const state = { lastError: '' };
+  const password = async (hint) => {
+    const [pw] = await formScreen({
+      title: 'Verifikasi dua langkah',
+      subtitle: hint ? `Petunjuk: ${hint}` : 'Akunmu dilindungi kata sandi tambahan.',
+      fields: [{ label: 'Kata sandi Telegram', attrs: { type: 'password', autocomplete: 'current-password' } }],
+      submit: 'Masuk',
+      error: state.lastError,
+    });
+    state.lastError = '';
+    return pw;
+  };
+  const onError = async (e) => {
+    const code = e?.errorMessage || e?.message || '';
+    state.lastError = /FLOOD/.test(code) ? `Terlalu banyak percobaan. Tunggu ${e.seconds || 'beberapa'} detik.` : errorText(e);
+    return /API_ID|BANNED|AUTH_RESTART|PHONE_NUMBER_FLOOD/.test(code);
+  };
+
+  if ((await qrLogin(tg, password, onError)) === 'phone') await phoneLogin(tg, state, password, onError);
+}
+
+async function qrLogin(tg, password, onError) {
+  let useSms;
+  const switched = new Promise((_, reject) => (useSms = () => reject(new Error('USE_PHONE'))));
+  switched.catch(() => {});
+  const img = h('img', { class: 'qr-img', alt: 'Kode QR untuk login Telegram', width: 232, height: 232, hidden: true });
+  const wait = h('span', { class: 'spinner' });
+  screen(
+    'Masuk dengan Telegram',
+    null,
+    h('div', { class: 'qr-box' }, wait, img),
+    h(
+      'ol',
+      { class: 'qr-steps' },
+      h('li', null, 'Buka Telegram di HP'),
+      h('li', null, 'Buka Settings › Devices › Link Desktop Device'),
+      h('li', null, 'Arahkan kamera ke kode QR ini'),
+    ),
+    h('button', { type: 'button', class: 'btn btn-text btn-block', onclick: () => useSms() }, 'Masuk dengan nomor telepon'),
+  );
+  try {
+    await tg.loginQr({
+      qrCode: async ({ token }) => {
+        const { toDataURL } = await import('qrcode');
+        img.src = await toDataURL(`tg://login?token=${b64url(token)}`, { width: 464, margin: 1, errorCorrectionLevel: 'M' });
+        img.hidden = false;
+        wait.remove();
+        return switched; // pending until the user switches to phone login
+      },
+      password,
+      onError,
+    });
+    return 'done';
+  } catch (e) {
+    if (e?.message === 'USE_PHONE') return 'phone';
+    throw e;
+  }
+}
+
+async function phoneLogin(tg, state, password, onError) {
   let codeViaApp = false;
   await tg.login({
     phoneNumber: async () => {
       const [phone] = await formScreen({
-        title: 'Masuk dengan Telegram',
+        title: 'Masuk dengan nomor telepon',
         subtitle: 'Kami akan mengirim kode ke aplikasi Telegram-mu.',
         fields: [{ label: 'Nomor telepon', attrs: { type: 'tel', autocomplete: 'tel', placeholder: '+62812xxxxxxx' } }],
         submit: 'Kirim kode',
-        error: lastError,
+        error: state.lastError,
         validate: ([p]) => (!/^\+?\d{7,15}$/.test(p.replace(/[\s-]/g, '')) ? 'Masukkan nomor dengan kode negara, mis. +62812…' : null),
       });
-      lastError = '';
+      state.lastError = '';
       return phone.replace(/[\s-]/g, '');
     },
     phoneCode: async (isApp) => {
@@ -101,29 +164,14 @@ export async function runLogin(tg) {
         subtitle: codeViaApp ? 'Kode dikirim ke aplikasi Telegram di perangkatmu yang lain.' : 'Kode dikirim lewat SMS.',
         fields: [{ label: 'Kode login', attrs: { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: '12345' } }],
         submit: 'Verifikasi',
-        error: lastError,
+        error: state.lastError,
         validate: ([c]) => (!/^\d{4,8}$/.test(c) ? 'Kode berupa 4–8 angka.' : null),
       });
-      lastError = '';
+      state.lastError = '';
       return code;
     },
-    password: async (hint) => {
-      const [pw] = await formScreen({
-        title: 'Verifikasi dua langkah',
-        subtitle: hint ? `Petunjuk: ${hint}` : 'Akunmu dilindungi kata sandi tambahan.',
-        fields: [{ label: 'Kata sandi Telegram', attrs: { type: 'password', autocomplete: 'current-password' } }],
-        submit: 'Masuk',
-        error: lastError,
-      });
-      lastError = '';
-      return pw;
-    },
-    onError: async (e) => {
-      lastError = errorText(e);
-      const fatal = /API_ID|BANNED|AUTH_RESTART|PHONE_NUMBER_FLOOD/.test(e?.errorMessage || e?.message || '');
-      if (/FLOOD/.test(e?.errorMessage || '')) lastError = `Terlalu banyak percobaan. Tunggu ${e.seconds || 'beberapa'} detik.`;
-      return fatal;
-    },
+    password,
+    onError,
   });
 }
 

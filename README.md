@@ -2,7 +2,7 @@
 
 Drive ala Google Drive yang berjalan **100% di browser**, dengan **Telegram sebagai penyimpanan**. Tanpa backend, tanpa framework (vanilla JS + Vite).
 
-- Login dengan akun Telegram sendiri (MTProto lewat WebSocket, GramJS).
+- Login cukup scan kode QR dari aplikasi Telegram (atau pakai nomor telepon). Koneksi MTProto lewat WebSocket (GramJS).
 - Semua file **dienkripsi di browser** (AES-256-GCM) sebelum diunggah. Telegram hanya melihat blob acak bernama `xxxx.bin`.
 - Daftar folder/file (index) juga terenkripsi, disimpan sebagai pesan yang di-pin di channel privat **"T-Drive Storage"**.
 - File besar dipecah otomatis (≈1,86 GB per pesan), jadi ukuran file tidak dibatasi 2 GB.
@@ -21,9 +21,9 @@ npm run build      # hasil statis di dist/
 
 Untuk mencoba UI tanpa akun Telegram, jalankan `npm run dev` lalu buka `/test/harness.html`. Halaman itu memakai UI asli dengan Telegram tiruan di memori.
 
-Butuh **API ID & API hash** dari <https://my.telegram.org> › *API development tools*. Ada dua cara mengisinya:
+Butuh **API ID & API hash** dari <https://my.telegram.org> › *API development tools* (sekali saja, oleh pemilik deploy). Ada dua cara mengisinya:
 - Diisi user saat pertama membuka aplikasi (disimpan di localStorage), atau
-- Ditanam saat build lewat `VITE_TG_API_ID` / `VITE_TG_API_HASH` (lihat `.env.example`).
+- Ditanam saat build lewat `VITE_TG_API_ID` / `VITE_TG_API_HASH` (lihat `.env.example`). **Disarankan**: user langsung melihat layar login QR tanpa isian apa pun.
 
 ## Deploy (GitHub Pages)
 

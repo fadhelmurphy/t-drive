@@ -83,6 +83,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .auth-sub { margin: 0; color: var(--muted); line-height: 1.5; }
 .auth-form { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
 .form-error { margin: 0; min-height: 20px; color: var(--danger); font-size: 13px; }
+.qr-box { align-self: center; width: 248px; height: 248px; display: grid; place-items: center; background: #fff; border-radius: 16px; padding: 8px; margin: 8px 0; border: 1px solid var(--border); }
+.qr-img { width: 232px; height: 232px; image-rendering: pixelated; }
+.qr-steps { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.8; }
 .loading { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 15px; }
 
 /* ---------- Shell ---------- */
