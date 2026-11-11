@@ -1,0 +1,11 @@
+{
+  "name": "T-Drive",
+  "short_name": "T-Drive",
+  "description": "Drive terenkripsi dengan penyimpanan Telegram",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#1a73c9",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

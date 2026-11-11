@@ -1,0 +1,16 @@
+import { Api } from 'telegram';
+import { Tg } from '../src/core/tg.js';
+const tg = new Tg(12345, '0123456789abcdef0123456789abcdef');
+const reqs = [];
+tg.client.invoke = async (r) => { r.getBytes(); reqs.push(r.className); return r instanceof Api.messages.SendMedia ? { updates: [new Api.UpdateNewChannelMessage({ message: { id: 7, media: { document: {} } }, pts: 1, ptsCount: 1 })] } : true; };
+tg.useChannel({ id: '1234567890', accessHash: '-987654321' });
+const fileId = tg.newFileId();
+await tg.savePart({ fileId, part: 0, totalParts: 3, bytes: new Uint8Array(524288), big: true });
+await tg.savePart({ fileId, part: 0, totalParts: 1, bytes: new Uint8Array(10), big: false });
+await tg.sendDocument({ fileId, totalParts: 3, big: true, name: 'x.bin' });
+await tg.pin(7); await tg.deleteMessages([1]);
+tg.client.getSender = async (dc) => ({ dcId: dc });
+tg.client.invokeWithSender = async (r) => { r.getBytes(); reqs.push(r.className); return new Api.upload.File({ type: new Api.storage.FileUnknown(), mtime: 0, bytes: Buffer.from([1]) }); };
+await tg.fetchWindow(new Api.Document({ id: 5n, accessHash: 6n, fileReference: Buffer.from([1]), date: 0, mimeType: 'x', size: 10n, dcId: 2, attributes: [] }), 1048576);
+console.log('OK', reqs.join(','));
+process.exit(0);

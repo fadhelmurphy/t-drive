@@ -1,0 +1,23 @@
+{
+  "name": "t-drive",
+  "version": "1.0.0",
+  "description": "Drive terenkripsi di browser dengan penyimpanan Telegram",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run && node scripts/serialize-check.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "big-integer": "^1.6.52",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "vite": "^8.3.8",
+    "vite-plugin-node-polyfills": "^0.28.0",
+    "vitest": "^5.1.0"
+  },
+  "type": "module",
+  "private": true
+}
