@@ -78,6 +78,7 @@ export class Preview {
     const signal = this.ctrl.signal;
     this.el.setAttribute('aria-label', `Pratinjau ${item.name}`);
     this.el.replaceChildren(
+      ...[
       h(
         'header',
         { class: 'preview-bar' },
@@ -90,6 +91,7 @@ export class Preview {
       this.i > 0 ? h('button', { class: 'preview-nav prev', 'aria-label': 'Sebelumnya', onclick: () => this.step(-1) }, icon('left', 28)) : null,
       stage,
       this.i < this.items.length - 1 ? h('button', { class: 'preview-nav next', 'aria-label': 'Berikutnya', onclick: () => this.step(1) }, icon('right', 28)) : null,
+      ].filter(Boolean),
     );
 
     const show = (node) => !signal.aborted && stage.replaceChildren(node);

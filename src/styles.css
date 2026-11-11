@@ -277,3 +277,19 @@ button:disabled { cursor: default; opacity: 0.5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---- Sharing ---- */
+.share-list { display: flex; flex-direction: column; gap: 8px; padding: 8px 20px; }
+.share-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.share-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.share-page { max-width: 880px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 12px; }
+.share-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.share-top h1 { margin: 0; font-size: 20px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.share-items { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.share-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.share-item:last-child { border-bottom: 0; }
+.share-item .link { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; display: flex; align-items: center; gap: 12px; }
+.share-item .link:hover .item-name { text-decoration: underline; }
+.share-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.btn-outline.danger { color: var(--danger); }

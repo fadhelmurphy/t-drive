@@ -9,6 +9,24 @@ await tg.savePart({ fileId, part: 0, totalParts: 3, bytes: new Uint8Array(524288
 await tg.savePart({ fileId, part: 0, totalParts: 1, bytes: new Uint8Array(10), big: false });
 await tg.sendDocument({ fileId, totalParts: 3, big: true, name: 'x.bin' });
 await tg.pin(7); await tg.deleteMessages([1]);
+// Sharing requests
+tg.client.invoke = async (r) => {
+  r.getBytes(); reqs.push(r.className);
+  if (r instanceof Api.channels.CreateChannel) return { chats: [new Api.Channel({ id: 5n, accessHash: 6n, title: 't', date: 0, photo: new Api.ChatPhotoEmpty() })] };
+  if (r instanceof Api.messages.ExportChatInvite) return { link: 'https://t.me/+AbCd_123-x' };
+  if (r instanceof Api.messages.CheckChatInvite) return new Api.ChatInviteAlready({ chat: new Api.Channel({ id: 5n, accessHash: 6n, title: 't', date: 0, photo: new Api.ChatPhotoEmpty() }) });
+  if (r instanceof Api.channels.GetMessages) return { messages: [new Api.Message({ id: 1, peerId: new Api.PeerChannel({ channelId: 1n }), date: 0, message: '', media: new Api.MessageMediaDocument({ document: new Api.Document({ id: 9n, accessHash: 1n, fileReference: Buffer.from([1]), date: 0, mimeType: 'x', size: 1n, dcId: 2, attributes: [] }) }) })] };
+  if (r instanceof Api.messages.ForwardMessages) return { updates: [new Api.UpdateNewChannelMessage({ message: { id: 77, media: { document: { id: 9n } } }, pts: 1, ptsCount: 1 })] };
+  return true;
+};
+const ch = await tg.createShareChannel();
+const st = tg.forChannel(ch);
+const hash = await st.exportInvite();
+if (hash !== 'AbCd_123-x') throw new Error('bad invite hash ' + hash);
+await st.joinInvite(hash);
+const map = await tg.forwardTo(st, [1]);
+if (map.get(1) !== 77) throw new Error('forward map');
+await st.deleteChannel();
 tg.client.getSender = async (dc) => ({ dcId: dc });
 tg.client.invokeWithSender = async (r) => { r.getBytes(); reqs.push(r.className); return new Api.upload.File({ type: new Api.storage.FileUnknown(), mtime: 0, bytes: Buffer.from([1]) }); };
 await tg.fetchWindow(new Api.Document({ id: 5n, accessHash: 6n, fileReference: Buffer.from([1]), date: 0, mimeType: 'x', size: 10n, dcId: 2, attributes: [] }), 1048576);

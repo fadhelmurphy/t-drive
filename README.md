@@ -5,6 +5,7 @@ Drive ala Google Drive yang berjalan **100% di browser**, dengan **Telegram seba
 - Login cukup scan kode QR dari aplikasi Telegram (atau pakai nomor telepon). Koneksi MTProto lewat WebSocket (GramJS).
 - Semua file **dienkripsi di browser** (AES-256-GCM) sebelum diunggah. Telegram hanya melihat blob acak bernama `xxxx.bin`.
 - Opsional: **Upload file terbuka** (menu Baru) menyimpan file apa adanya dengan nama dan tipe asli, jadi bisa dilihat langsung di Telegram. Tidak terenkripsi, jadi siapa pun dengan akses channel bisa membacanya. Default tetap terenkripsi. Bisa diubah bolak-balik lewat klik kanan › "Ubah ke terbuka/tertutup" (file diunggah ulang).
+- **Berbagi lewat link:** klik kanan › Bagikan. Dibuat channel Telegram khusus berisi salinan (forward, tanpa unggah ulang) plus manifes terenkripsi; kunci ada di bagian `#` link. Penerima login Telegram, lalu bisa melihat, mengunduh, atau menyimpan ke drive-nya. Cabut di menu **Dibagikan** (channel dihapus). Tidak ada izin "hanya lihat".
 - Daftar folder/file (index) juga terenkripsi, disimpan sebagai pesan yang di-pin di channel privat **"T-Drive Storage"**.
 - File besar dipecah otomatis (≈1,86 GB per pesan), jadi ukuran file tidak dibatasi 2 GB.
 - Streaming video/audio dengan seek, pratinjau gambar/PDF/teks, unduhan langsung ke disk lewat Service Worker.

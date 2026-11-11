@@ -4,8 +4,9 @@ import { DriveStore, ConflictError } from '../src/core/drive.js';
 import { Uploader } from '../src/core/uploader.js';
 import { Reader } from '../src/core/reader.js';
 import { CIPHER_BLOCK, LAYOUT, PLAIN_BLOCK } from '../src/core/blocks.js';
-import { WrongPassphraseError, randomBytes } from '../src/core/crypto.js';
+import { WrongPassphraseError, randomBytes, toB64 } from '../src/core/crypto.js';
 import { ROOT } from '../src/core/drive-index.js';
+import { copyToDrive, createShare, manifestChildren, openShare, parseShareHash, revokeShare, shareLink } from '../src/core/share.js';
 
 // Speed: tiny PBKDF2 isn't configurable via the store, so this suite takes a few seconds.
 const prev = LAYOUT.blocksPerPart;
@@ -170,4 +171,59 @@ describe('end to end with fake Telegram', () => {
     expect(await new Reader(tg).readAll(c)).toEqual(data);
     expect(store.index.children(ROOT).length).toBe(1);
   }, 60000);
+
+  it('shares a folder by link: recipient reads, copies to own drive; revoke kills it', async () => {
+    const owner = new FakeTg();
+    const drive = new DriveStore(owner);
+    await drive.create('pw-owner');
+    const folder = drive.mutate((ix) => ix.createFolder('Liburan'));
+    const sub = drive.mutate((ix) => ix.createFolder('Hari 1', folder.id));
+    const d1 = randomBytes(PLAIN_BLOCK * 3 + 99);
+    const d2 = randomBytes(CIPHER_BLOCK + 5);
+    const up = new Uploader(owner, drive);
+    up.add([{ file: new File([d1], 'a.mp4', { type: 'video/mp4' }), parent: folder.id }]);
+    up.add([{ file: new File([d2], 'b.jpg', { type: 'image/jpeg' }), parent: sub.id }], { open: true });
+    await waitIdle(up);
+
+    const share = await createShare({ tg: owner, drive, ids: [folder.id], name: 'Liburan' });
+    expect(share.count).toBe(2);
+    expect(drive.index.shares().map((x) => x.id)).toEqual([share.id]);
+    const link = shareLink(share, 'https://x.test/t-drive/');
+    const parsed = parseShareHash('#' + link.split('#')[1]);
+    expect(parsed).toEqual({ invite: share.invite, key: share.key });
+
+    // Recipient: another Telegram account on the same "server".
+    const guest = new FakeTg(owner);
+    guest.chanId = 'guest-main'; // the guest's own storage channel
+    const { shareTg, manifest } = await openShare({ tg: guest, ...parsed });
+    const top = manifestChildren(manifest, ROOT);
+    expect(top.map((i) => i.name)).toEqual(['Liburan']);
+    const files = Object.values(manifest.items).filter((i) => i.type === 'file');
+    const reader = new Reader(shareTg);
+    const a = files.find((f) => f.name === 'a.mp4');
+    const b = files.find((f) => f.name === 'b.jpg');
+    expect(await reader.readAll(a)).toEqual(d1);
+    expect(await reader.readAll(b)).toEqual(d2);
+    // Shared parts are copies: deleting the owner's originals does not break the share.
+    await owner.deleteMessages(drive.index.get(files.find((f) => f.name === 'a.mp4').id).parts);
+    expect(await new Reader(shareTg).readAll(a)).toEqual(d1);
+
+    // Guest saves it into their own drive.
+    const mine = new DriveStore(guest);
+    await mine.create('pw-guest');
+    await copyToDrive({ shareTg, myTg: guest, drive: mine, manifest, ids: top.map((i) => i.id) });
+    const copied = mine.index.children(ROOT)[0];
+    expect(copied.name).toBe('Liburan');
+    const mf = mine.index.children(copied.id).find((i) => i.type === 'file');
+    expect(await new Reader(guest).readAll(mf)).toEqual(d1);
+    const sf = mine.index.children(mine.index.children(copied.id).find((i) => i.type === 'folder').id)[0];
+    expect(sf.open).toBe(true);
+    expect(await new Reader(guest).readAll(sf)).toEqual(d2);
+
+    // Wrong key and revoked link both fail.
+    await expect(openShare({ tg: guest, invite: parsed.invite, key: toB64(randomBytes(32)) })).rejects.toThrow(/Kunci/);
+    await revokeShare({ tg: owner, drive, share });
+    expect(drive.index.shares()).toEqual([]);
+    await expect(openShare({ tg: guest, ...parsed })).rejects.toThrow(/dicabut|tidak valid/);
+  }, 90000);
 });

@@ -12,6 +12,20 @@ export class DriveIndex {
     return this.data.items;
   }
 
+  /** Active shares: { [id]: { id, name, created, channel:{id,accessHash}, invite, key, count } } */
+  shares() {
+    return Object.values(this.data.shares || {}).sort((a, b) => b.created - a.created);
+  }
+
+  addShare(share) {
+    (this.data.shares ||= {})[share.id] = share;
+    return share;
+  }
+
+  removeShare(id) {
+    if (this.data.shares) delete this.data.shares[id];
+  }
+
   get(id) {
     return this.items[id];
   }

@@ -5,8 +5,11 @@ import { Reader } from './core/reader.js';
 import { Uploader } from './core/uploader.js';
 import { WrongPassphraseError, deriveKey, fromB64, randomBytes, seal, toB64, unseal } from './core/crypto.js';
 import { installStreamBridge, registerStreamWorker } from './core/stream.js';
+import { openShare, parseShareHash } from './core/share.js';
+import { ShareView } from './ui/share-view.js';
 import { askApiCredentials, pickApiCredentials, askPassphrase, runLogin, showLoading } from './ui/auth.js';
 import { errorText } from './ui/dialogs.js';
+import { h } from './ui/dom.js';
 import { DriveView } from './ui/drive-view.js';
 
 const LS = {
@@ -102,6 +105,7 @@ export async function start() {
   }
 
   const ctx = { tg: null, drive: null, passphrase: null, userId: null };
+  const shareLink = parseShareHash(location.hash);
 
   // 1) Returning user: unlock the locally sealed session with the passphrase.
   if (store.get(LS.session)) {
@@ -157,6 +161,12 @@ export async function start() {
     }
   }
 
+  // Opened someone's share link without an unlocked drive: view it with the in-memory session.
+  if (shareLink && !ctx.passphrase) {
+    await mountShare(ctx, shareLink, streaming);
+    return;
+  }
+
   showLoading('Menyiapkan penyimpanan…');
   const me = await ctx.tg.me();
   ctx.userId = me.id.toString();
@@ -193,6 +203,11 @@ export async function start() {
     }
   }
 
+  if (shareLink) {
+    await mountShare(ctx, shareLink, streaming);
+    return;
+  }
+
   const reader = new Reader(ctx.tg);
   const uploader = new Uploader(ctx.tg, ctx.drive);
   installStreamBridge((id) => ctx.drive.index.get(id), reader);
@@ -218,6 +233,37 @@ export async function start() {
       e.returnValue = '';
     }
   });
+}
+
+async function mountShare(ctx, link, streaming) {
+  showLoading('Membuka link berbagi…');
+  const home = () => {
+    history.replaceState(null, '', location.pathname + location.search);
+    location.reload();
+  };
+  let opened;
+  try {
+    opened = await openShare({ tg: ctx.tg, ...link });
+  } catch (e) {
+    const root = document.getElementById('app');
+    root.replaceChildren(
+      h('main', { class: 'auth' }, h('div', { class: 'auth-card' }, h('h1', { class: 'auth-title' }, 'Link tidak bisa dibuka'), h('p', { class: 'auth-sub' }, errorText(e)), h('button', { class: 'btn btn-primary btn-block', onclick: home }, 'Buka T-Drive'))),
+    );
+    return;
+  }
+  const reader = new Reader(opened.shareTg);
+  installStreamBridge((id) => opened.manifest.items[id], reader);
+  const streamOk = await streaming;
+  new ShareView({
+    root: document.getElementById('app'),
+    manifest: opened.manifest,
+    reader,
+    streamOk,
+    shareTg: opened.shareTg,
+    myTg: ctx.tg,
+    drive: ctx.drive,
+    onHome: home,
+  }).mount();
 }
 
 async function lock(ctx, uploader) {

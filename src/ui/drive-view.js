@@ -1,5 +1,5 @@
 import { h, icon, badge, folderIcon } from './dom.js';
-import { confirmDialog, promptDialog, toast, errorText } from './dialogs.js';
+import { confirmDialog, customDialog, promptDialog, toast, errorText } from './dialogs.js';
 import { logo } from './auth.js';
 import { UploadPanel } from './upload-panel.js';
 import { Preview } from './preview.js';
@@ -7,12 +7,14 @@ import { pickFolder } from './move-dialog.js';
 import { ROOT } from '../core/drive-index.js';
 import { ConflictError } from '../core/drive.js';
 import { streamUrl } from '../core/stream.js';
+import { createShare, revokeShare, shareLink } from '../core/share.js';
 import { formatBytes, formatDate } from '../core/util.js';
 
 const SECTIONS = [
   { id: 'drive', label: 'Drive Saya', icon: 'drive' },
   { id: 'recent', label: 'Terbaru', icon: 'clock' },
   { id: 'starred', label: 'Berbintang', icon: 'star' },
+  { id: 'shared', label: 'Dibagikan', icon: 'link' },
   { id: 'trash', label: 'Sampah', icon: 'trash' },
 ];
 const SORTS = {
@@ -223,7 +225,8 @@ export class DriveView {
     if (s.section === 'drive') {
       if (s.folder !== ROOT && !this.index.isLive(s.folder)) s.folder = ROOT;
       list = this.index.children(s.folder);
-    } else if (s.section === 'recent') return this.index.recent(200);
+    } else if (s.section === 'shared') return [];
+    else if (s.section === 'recent') return this.index.recent(200);
     else if (s.section === 'starred') list = this.index.starred();
     else if (s.section === 'trash') list = this.index.trash().sort((a, b) => (b.trashedAt || 0) - (a.trashedAt || 0));
     else list = this.index.search(s.query);
@@ -293,7 +296,8 @@ export class DriveView {
     const files = items.filter((i) => i.type === 'file');
 
     let content;
-    if (!items.length) content = this.emptyState();
+    if (s.section === 'shared') content = this.index.shares().length ? this.sharesView() : this.emptyState();
+    else if (!items.length) content = this.emptyState();
     else if (s.layout === 'list') content = this.listView(items);
     else {
       content = h(
@@ -382,8 +386,8 @@ export class DriveView {
       s.section === 'trash' && this.index.trash().length
         ? h('button', { class: 'btn btn-outline', onclick: () => this.emptyTrash() }, 'Kosongkan sampah')
         : null,
-      s.section !== 'trash' && s.section !== 'recent' ? sortSel : null,
-      h('div', { class: 'segmented', role: 'group', 'aria-label': 'Tampilan' }, seg('list', 'list', 'Tampilan daftar'), seg('grid', 'grid', 'Tampilan petak')),
+      s.section !== 'trash' && s.section !== 'recent' && s.section !== 'shared' ? sortSel : null,
+      s.section === 'shared' ? null : h('div', { class: 'segmented', role: 'group', 'aria-label': 'Tampilan' }, seg('list', 'list', 'Tampilan daftar'), seg('grid', 'grid', 'Tampilan petak')),
     );
   }
 
@@ -409,6 +413,7 @@ export class DriveView {
       recent: ['Belum ada file', 'File yang kamu unggah akan muncul di sini.'],
       starred: ['Belum ada yang berbintang', 'Tandai file penting supaya mudah ditemukan.'],
       trash: ['Sampah kosong', 'Item yang dihapus akan muncul di sini.'],
+      shared: ['Belum ada yang dibagikan', 'Klik kanan file atau folder lalu pilih Bagikan untuk membuat link.'],
       search: ['Tidak ada hasil', 'Coba kata kunci lain.'],
     };
     const [t, d] = msgs[s.section];
@@ -598,6 +603,7 @@ export class DriveView {
     if (one) list.push({ label: one.type === 'folder' ? 'Buka' : 'Pratinjau', icon: one.type === 'folder' ? 'folder' : 'file', run: () => this.open(one) });
     if (files.length === items.length) list.push({ label: 'Unduh', icon: 'download', run: () => this.download(files) });
     if (one) list.push({ label: 'Ganti nama', icon: 'edit', run: () => this.rename(one) });
+    list.push({ label: 'Bagikan', icon: 'link', run: () => this.share(items) });
     if (files.length && files.length === items.length) {
       if (files.every((f) => f.open)) list.push({ label: 'Ubah ke tertutup (enkripsi)', icon: 'lock', run: () => this.convert(files, false) });
       else if (files.every((f) => !f.open)) list.push({ label: 'Ubah ke terbuka (terlihat di Telegram)', icon: 'upload', run: () => this.convert(files, true) });
@@ -710,6 +716,96 @@ export class DriveView {
     if (!name) return;
     const f = this.attempt(() => this.drive.mutate((ix) => ix.createFolder(name, parent)));
     if (f && this.state.section !== 'drive') this.go('drive', parent);
+  }
+
+  async share(items) {
+    const ok = await confirmDialog({
+      title: 'Bagikan lewat link?',
+      message:
+        'Dibuat channel Telegram khusus berisi salinan file ini (tanpa unggah ulang). Siapa pun yang punya link dan akun Telegram bisa melihat dan mengunduhnya sampai kamu mencabutnya.',
+      okText: 'Buat link',
+    });
+    if (!ok) return;
+    const t = toast('Menyiapkan…', { timeout: 0 });
+    const label = t.firstChild;
+    try {
+      const share = await createShare({
+        tg: this.tg,
+        drive: this.drive,
+        ids: items.map((i) => i.id),
+        name: items.length === 1 ? items[0].name : `${items.length} item`,
+        onStep: (x) => (label.textContent = x),
+      });
+      t.remove();
+      this.showShare(share);
+    } catch (e) {
+      t.remove();
+      toast('Gagal membagikan: ' + errorText(e), { error: true });
+    }
+  }
+
+  showShare(share) {
+    const link = shareLink(share);
+    const input = h('input', { class: 'input', type: 'text', readonly: true, value: link, 'aria-label': 'Link berbagi' });
+    const copy = async () => {
+      try {
+        await navigator.clipboard.writeText(link);
+        toast('Link disalin.');
+      } catch {
+        input.select();
+      }
+    };
+    const m = customDialog({
+      title: 'Link berbagi',
+      body: h(
+        'div',
+        { class: 'modal-body' },
+        h('p', { class: 'modal-text' }, `“${share.name}” bisa dibuka siapa pun yang punya link ini dan akun Telegram. Cabut kapan saja di menu Dibagikan.`),
+        input,
+      ),
+      actions: [h('button', { class: 'btn btn-text', onclick: () => m.close() }, 'Tutup'), h('button', { class: 'btn btn-primary', onclick: copy }, 'Salin link')],
+    });
+    input.focus();
+    input.select();
+  }
+
+  sharesView() {
+    const rows = this.index.shares().map((sh) =>
+      h(
+        'div',
+        { class: 'share-row' },
+        h('span', { class: 'folder-ic' }, icon('link', 20)),
+        h('div', { class: 'share-info' }, h('span', { class: 'item-name', title: sh.name }, sh.name), h('span', { class: 'muted' }, `${sh.count} file · ${formatDate(sh.created)}`)),
+        h('button', { class: 'btn btn-outline', onclick: () => this.copyShare(sh) }, 'Salin link'),
+        h('button', { class: 'btn btn-outline danger', onclick: () => this.revoke(sh) }, 'Cabut'),
+      ),
+    );
+    return h('div', { class: 'share-list' }, rows);
+  }
+
+  async copyShare(sh) {
+    try {
+      await navigator.clipboard.writeText(shareLink(sh));
+      toast('Link disalin.');
+    } catch {
+      this.showShare(sh);
+    }
+  }
+
+  async revoke(sh) {
+    const ok = await confirmDialog({
+      title: 'Cabut akses?',
+      message: `Link “${sh.name}” berhenti berfungsi dan channel berbagi dihapus. Salinan yang sudah diunduh orang lain tidak bisa ditarik.`,
+      okText: 'Cabut',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await revokeShare({ tg: this.tg, drive: this.drive, share: sh });
+      toast('Akses dicabut.');
+    } catch (e) {
+      toast('Gagal mencabut: ' + errorText(e), { error: true });
+    }
   }
 
   async convert(files, toOpen) {

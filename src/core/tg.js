@@ -142,6 +142,79 @@ export class Tg {
     return created;
   }
 
+  // ---------- Shares (one private channel per share) ----------
+
+  /** Same client, different channel: use for the share channel and for reading shared ones. */
+  forChannel(ch) {
+    const t = Object.create(this);
+    t.useChannel(ch);
+    return t;
+  }
+
+  async createShareChannel() {
+    const res = await this.client.invoke(
+      new Api.channels.CreateChannel({ title: 'T-Drive Share', about: 'Berkas yang dibagikan lewat T-Drive.', broadcast: true }),
+    );
+    const ch = res.chats.find((c) => c instanceof Api.Channel);
+    return { id: ch.id.toString(), accessHash: ch.accessHash.toString() };
+  }
+
+  /** Invite link hash (without t.me/+) for the current channel. */
+  async exportInvite() {
+    const inv = await this.client.invoke(new Api.messages.ExportChatInvite({ peer: this.peer }));
+    const m = /(?:\+|joinchat\/)([\w-]+)/.exec(inv.link || '');
+    if (!m) throw new Error('Gagal membuat link undangan');
+    return m[1];
+  }
+
+  /** Join (or find) the channel behind an invite hash. Returns {id, accessHash}. */
+  async joinInvite(hash) {
+    const info = await this.client.invoke(new Api.messages.CheckChatInvite({ hash }));
+    let chat = info instanceof Api.ChatInviteAlready ? info.chat : null;
+    if (!chat) {
+      const res = await this.client.invoke(new Api.messages.ImportChatInvite({ hash }));
+      chat = res.chats.find((c) => c instanceof Api.Channel);
+    }
+    if (!(chat instanceof Api.Channel)) throw new Error('Link berbagi tidak valid atau sudah dicabut');
+    return { id: chat.id.toString(), accessHash: chat.accessHash.toString() };
+  }
+
+  async deleteChannel() {
+    await this.client.invoke(new Api.channels.DeleteChannel({ channel: this.channel }));
+  }
+
+  /**
+   * Forward messages of this channel into `dest`'s channel (no re-upload on Telegram's side).
+   * Returns Map(oldMsgId -> newMsgId).
+   */
+  async forwardTo(dest, ids) {
+    const out = new Map();
+    for (let i = 0; i < ids.length; i += 100) {
+      const batch = ids.slice(i, i + 100);
+      const src = await this.getMessages(batch);
+      const byDoc = new Map(src.map((m) => [m.media.document.id.toString(), m.id]));
+      const res = await this.client.invoke(
+        new Api.messages.ForwardMessages({
+          fromPeer: this.peer,
+          toPeer: dest.peer,
+          id: batch,
+          randomId: batch.map(() => generateRandomLong(true)),
+          silent: true,
+          dropAuthor: true,
+        }),
+      );
+      for (const u of res.updates || []) {
+        const m = u.message;
+        if ((u instanceof Api.UpdateNewChannelMessage || u instanceof Api.UpdateNewMessage) && m?.media?.document) {
+          const old = byDoc.get(m.media.document.id.toString());
+          if (old) out.set(old, m.id);
+        }
+      }
+    }
+    if (out.size !== new Set(ids).size) throw new Error('Sebagian file gagal diteruskan ke channel tujuan');
+    return out;
+  }
+
   // ---------- Upload ----------
 
   newFileId() {
