@@ -136,4 +136,38 @@ describe('end to end with fake Telegram', () => {
     for await (const c of reader.range(big, s, e)) pieces.push(...c);
     expect(Uint8Array.from(pieces)).toEqual(data.slice(s, e + 1));
   }, 60000);
+
+  it('converts a file between open and encrypted, keeping id and content', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('passphrase-uji');
+    const data = randomBytes(PLAIN_BLOCK * 4 + 321);
+    const up = new Uploader(tg, store);
+    up.add([{ file: new File([data], 'dok.pdf', { type: 'application/pdf' }), parent: ROOT }]);
+    await waitIdle(up);
+    const item = store.index.children(ROOT)[0];
+    const id = item.id;
+    const oldParts = [...item.parts];
+    const reader = new Reader(tg);
+
+    up.convert([item], true, reader); // encrypted -> open
+    await waitIdle(up);
+    const o = store.index.get(id);
+    expect(o.open).toBe(true);
+    expect(o.key).toBeUndefined();
+    expect(o.parts).not.toEqual(oldParts);
+    await new Promise((r) => setTimeout(r, 20));
+    for (const m of oldParts) expect(tg.messages.has(m)).toBe(false);
+    expect(tg.messages.get(o.parts[0]).media.document.attributes[0].fileName).toMatch(/^dok\.pdf/);
+    expect(await new Reader(tg).readAll(o)).toEqual(data);
+
+    up.convert([o], false, new Reader(tg)); // open -> encrypted
+    await waitIdle(up);
+    const c = store.index.get(id);
+    expect(c.open).toBeUndefined();
+    expect(c.key).toBeTruthy();
+    expect(tg.messages.get(c.parts[0]).media.document.attributes[0].fileName).toMatch(/\.bin$/);
+    expect(await new Reader(tg).readAll(c)).toEqual(data);
+    expect(store.index.children(ROOT).length).toBe(1);
+  }, 60000);
 });

@@ -180,6 +180,20 @@ export class DriveIndex {
     return item;
   }
 
+  /** Swap a file's storage (encrypted <-> open) after it was re-uploaded. Returns the old part ids. */
+  replaceStorage(id, { open = false, key, nonce, parts }) {
+    const it = this.get(id);
+    if (!it || it.type !== 'file') throw new Error('Item tidak ditemukan');
+    const old = it.parts;
+    delete it.key;
+    delete it.nonce;
+    delete it.open;
+    if (open) it.open = true;
+    else Object.assign(it, { key, nonce });
+    it.parts = parts;
+    return old;
+  }
+
   rename(id, name) {
     const it = this.get(id);
     if (!it) throw new Error('Item tidak ditemukan');

@@ -598,6 +598,10 @@ export class DriveView {
     if (one) list.push({ label: one.type === 'folder' ? 'Buka' : 'Pratinjau', icon: one.type === 'folder' ? 'folder' : 'file', run: () => this.open(one) });
     if (files.length === items.length) list.push({ label: 'Unduh', icon: 'download', run: () => this.download(files) });
     if (one) list.push({ label: 'Ganti nama', icon: 'edit', run: () => this.rename(one) });
+    if (files.length && files.length === items.length) {
+      if (files.every((f) => f.open)) list.push({ label: 'Ubah ke tertutup (enkripsi)', icon: 'lock', run: () => this.convert(files, false) });
+      else if (files.every((f) => !f.open)) list.push({ label: 'Ubah ke terbuka (terlihat di Telegram)', icon: 'upload', run: () => this.convert(files, true) });
+    }
     list.push({ label: 'Pindahkan', icon: 'move', run: () => this.move(items) });
     list.push({ label: allStarred ? 'Hapus bintang' : 'Beri bintang', icon: 'star', run: () => this.star(items, !allStarred) });
     if (one && this.state.section !== 'drive') list.push({ label: 'Tampilkan lokasi', icon: 'drive', run: () => this.go('drive', one.parent) });
@@ -706,6 +710,18 @@ export class DriveView {
     if (!name) return;
     const f = this.attempt(() => this.drive.mutate((ix) => ix.createFolder(name, parent)));
     if (f && this.state.section !== 'drive') this.go('drive', parent);
+  }
+
+  async convert(files, toOpen) {
+    if (toOpen) {
+      const ok = await confirmDialog({
+        title: 'Ubah ke mode terbuka?',
+        message: `${files.length} file akan diunggah ulang tanpa enkripsi dan bisa dibaca siapa pun yang punya akses ke channel.`,
+        okText: 'Ubah ke terbuka',
+      });
+      if (!ok) return;
+    }
+    this.uploader.convert(files, toOpen, this.reader);
   }
 
   async rename(it) {

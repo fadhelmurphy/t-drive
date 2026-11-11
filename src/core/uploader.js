@@ -36,7 +36,7 @@ export class Uploader extends EventTarget {
   }
 
   /** entries: [{ file: File, parent: folderId }]. open: store unencrypted, visible in Telegram. */
-  add(entries, { open = false } = {}) {
+  add(entries, { open = false, replaceId = null } = {}) {
     for (const { file, parent } of entries) {
       this.tasks.push({
         id: uid(),
@@ -44,6 +44,7 @@ export class Uploader extends EventTarget {
         parent,
         name: file.name,
         open,
+        replaceId,
         size: file.size,
         loaded: 0,
         status: 'queued',
@@ -54,6 +55,14 @@ export class Uploader extends EventTarget {
     }
     this.emit();
     this.pump();
+  }
+
+  /** Re-upload existing files in the other mode (open <-> encrypted), streaming through `reader`. */
+  convert(items, toOpen, reader) {
+    for (const item of items) {
+      const file = new ReaderSource(reader, item);
+      this.add([{ file, parent: item.parent }], { open: toOpen, replaceId: item.id });
+    }
   }
 
   cancel(id) {
@@ -108,6 +117,11 @@ export class Uploader extends EventTarget {
         sent.push(await this.uploadPart(t, key, nonce, p));
       }
 
+      if (t.replaceId) {
+        const fields = open ? { open: true } : { key: toB64(rawKey), nonce: toB64(nonce) };
+        const old = this.drive.mutate((ix) => ix.replaceStorage(t.replaceId, { ...fields, parts: sent }));
+        this.tg.deleteMessages(old).catch(() => {});
+      } else
       this.drive.mutate((ix) =>
         ix.addFile({
           name: t.name,
@@ -193,6 +207,30 @@ export class Uploader extends EventTarget {
     } else doc = { name: `${uid()}.bin` };
     const msg = await withRetry(() => this.tg.sendDocument({ fileId, totalParts, big, ...doc }), { onWait, signal });
     return msg.id;
+  }
+}
+
+/** File-like view over a stored item: slice().arrayBuffer() reads (and decrypts) on demand. */
+class ReaderSource {
+  constructor(reader, item) {
+    this.reader = reader;
+    this.item = item;
+    this.size = item.size;
+    this.type = item.mime;
+    this.name = item.name;
+    this.lastModified = item.modified;
+  }
+
+  slice(a, b) {
+    const { reader, item } = this;
+    return {
+      arrayBuffer: async () => {
+        const out = new Uint8Array(b - a);
+        let o = 0;
+        if (b > a) for await (const c of reader.range(item, a, b - 1)) (out.set(c, o), (o += c.length));
+        return out.buffer;
+      },
+    };
   }
 }
 
