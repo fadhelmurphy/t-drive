@@ -64,17 +64,39 @@ function formScreen({ title, subtitle, fields, submit, error, extra, validate })
 export async function askApiCredentials(error) {
   const [apiId, apiHash] = await formScreen({
     title: 'Hubungkan ke Telegram',
-    subtitle: 'Masukkan API ID dan API hash milikmu dari my.telegram.org › API development tools. Disimpan hanya di browser ini.',
+    subtitle: 'Belum punya? Buat sekali di my.telegram.org › API development tools (isi nama app bebas), lalu tempel API ID dan API hash di sini. Disimpan hanya di browser ini.',
     fields: [
       { label: 'API ID', attrs: { inputmode: 'numeric', autocomplete: 'off', placeholder: '1234567' } },
       { label: 'API hash', attrs: { autocomplete: 'off', placeholder: '0123456789abcdef0123456789abcdef', spellcheck: false } },
     ],
     submit: 'Lanjut',
     error,
+    extra: () =>
+      h('a', { class: 'btn btn-block', href: 'https://my.telegram.org/apps', target: '_blank', rel: 'noopener noreferrer', style: { marginTop: '8px', textAlign: 'center' } }, 'Buat API ID di my.telegram.org ↗'),
     validate: ([id, hash]) =>
       !/^\d{3,12}$/.test(id) ? 'API ID harus berupa angka.' : !/^[a-f0-9]{32}$/i.test(hash) ? 'API hash harus 32 karakter heksadesimal.' : null,
   });
   return { apiId: Number(apiId), apiHash };
+}
+
+/** Choose among saved API profiles. Resolves {creds}, {remove: apiId} or {add: true}. */
+export function pickApiCredentials(profiles) {
+  return new Promise((resolve) => {
+    const mask = (hash) => hash.slice(0, 4) + '…' + hash.slice(-4);
+    const rows = profiles.map((p) =>
+      h(
+        'div',
+        { class: 'api-row', style: { display: 'flex', gap: '8px', marginBottom: '8px' } },
+        h('button', { class: 'btn btn-primary', type: 'button', style: { flex: '1', textAlign: 'left' }, onclick: () => resolve({ creds: p }) }, `API ID ${p.apiId} · ${mask(p.apiHash)}`),
+        h('button', { class: 'btn', type: 'button', title: 'Hapus', 'aria-label': `Hapus API ID ${p.apiId}`, onclick: () => resolve({ remove: p.apiId }) }, '✕'),
+      ),
+    );
+    screen(
+      'Pilih API ID',
+      'Pilih API ID yang sudah tersimpan di browser ini, atau tambahkan yang baru.',
+      h('div', { class: 'auth-form' }, ...rows, h('button', { class: 'btn btn-block', type: 'button', onclick: () => resolve({ add: true }) }, '+ Tambah API ID baru')),
+    );
+  });
 }
 
 function b64url(bytes) {

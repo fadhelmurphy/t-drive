@@ -5,7 +5,7 @@ import { Reader } from './core/reader.js';
 import { Uploader } from './core/uploader.js';
 import { WrongPassphraseError, deriveKey, fromB64, randomBytes, seal, toB64, unseal } from './core/crypto.js';
 import { installStreamBridge, registerStreamWorker } from './core/stream.js';
-import { askApiCredentials, askPassphrase, runLogin, showLoading } from './ui/auth.js';
+import { askApiCredentials, pickApiCredentials, askPassphrase, runLogin, showLoading } from './ui/auth.js';
 import { errorText } from './ui/dialogs.js';
 import { DriveView } from './ui/drive-view.js';
 
@@ -15,6 +15,7 @@ const LS = {
   salt: 'tdrive.salt',
   channel: 'tdrive.channel',
   prefs: 'tdrive.prefs',
+  apis: 'tdrive.apis', // saved API ID profiles
 };
 
 const store = {
@@ -66,13 +67,38 @@ function clearLocal({ keepApi = true } = {}) {
   if (!keepApi) store.del(LS.api);
 }
 
+async function chooseCredentials(active) {
+  let list = store.get(LS.apis) || [];
+  if (active && !list.some((p) => p.apiId === active.apiId)) list = [...list, active];
+  for (;;) {
+    let creds;
+    if (list.length) {
+      const r = await pickApiCredentials(list);
+      if (r.remove) {
+        list = list.filter((p) => p.apiId !== r.remove);
+        store.set(LS.apis, list);
+        if (active?.apiId === r.remove) store.del(LS.api);
+        continue;
+      }
+      creds = r.creds;
+    }
+    if (!creds) {
+      creds = await askApiCredentials();
+      list = [...list.filter((p) => p.apiId !== creds.apiId), creds];
+      store.set(LS.apis, list);
+    }
+    store.set(LS.api, creds);
+    return creds;
+  }
+}
+
 export async function start() {
   const streaming = registerStreamWorker();
 
   let creds = apiCredentials();
-  if (!creds) {
-    creds = await askApiCredentials();
-    store.set(LS.api, creds);
+  // With a sealed session the active API ID must stay the same one; otherwise let the user pick.
+  if (!creds || (!store.get(LS.session) && !import.meta.env.VITE_TG_API_ID)) {
+    creds = await chooseCredentials(creds);
   }
 
   const ctx = { tg: null, drive: null, passphrase: null, userId: null };
