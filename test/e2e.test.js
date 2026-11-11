@@ -226,4 +226,24 @@ describe('end to end with fake Telegram', () => {
     expect(drive.index.shares()).toEqual([]);
     await expect(openShare({ tg: guest, ...parsed })).rejects.toThrow(/dicabut|tidak valid/);
   }, 90000);
+
+  it('finds leftover Telegram documents the index does not know, keeps real files', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const up = new Uploader(tg, store);
+    up.add([{ file: new File([randomBytes(2000)], 'a.txt'), parent: ROOT }]);
+    up.add([{ file: new File([randomBytes(3000)], 'b.txt'), parent: ROOT }], { open: true });
+    await waitIdle(up);
+    expect(await store.findOrphans()).toEqual([]);
+    // Simulate a duplicate send that the index never recorded.
+    const { uploadBuffer } = await import('../src/core/drive.js');
+    const stray = await uploadBuffer(tg, randomBytes(500), 'stray.bin');
+    const orphans = await store.findOrphans();
+    expect(orphans.map((o) => o.id)).toEqual([stray.id]);
+    await tg.deleteMessages(orphans.map((o) => o.id));
+    expect(await store.findOrphans()).toEqual([]);
+    const reader = new Reader(tg);
+    for (const it of store.index.liveFiles()) expect((await reader.readAll(it)).length).toBe(it.size);
+  }, 60000);
 });

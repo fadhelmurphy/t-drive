@@ -118,6 +118,7 @@ export class DriveView {
         { label: name, header: true },
         { label: this.me.phone ? '+' + this.me.phone : this.me.username ? '@' + this.me.username : '', header: true, muted: true },
         { label: 'Muat ulang drive', icon: 'refresh', run: () => this.reloadDrive() },
+        { label: 'Bersihkan sisa di Telegram', icon: 'trash', run: () => this.cleanOrphans() },
         { label: 'Kunci', icon: 'lock', run: () => this.guardActive(this.onLock) },
         { label: 'Keluar', icon: 'logout', run: () => this.confirmLogout() },
       ]);
@@ -808,6 +809,35 @@ export class DriveView {
     }
   }
 
+  async cleanOrphans() {
+    if (this.uploader.active) return toast('Tunggu unggahan selesai dulu.', { error: true });
+    const t = toast('Memindai channel Telegram…', { timeout: 0 });
+    let orphans;
+    try {
+      orphans = await this.drive.findOrphans();
+    } catch (e) {
+      t.remove();
+      return toast('Gagal memindai: ' + errorText(e), { error: true });
+    }
+    t.remove();
+    if (!orphans.length) return toast('Tidak ada file sisa. Semuanya sesuai dengan indeks.');
+    const size = orphans.reduce((s, o) => s + o.size, 0);
+    const names = orphans.slice(0, 5).map((o) => o.name || '(tanpa nama)').join(', ');
+    const ok = await confirmDialog({
+      title: `Hapus ${orphans.length} file sisa?`,
+      message: `${formatBytes(size)} di channel Telegram tidak tercatat di drive (sisa unggahan gagal atau terduplikat): ${names}${orphans.length > 5 ? ', …' : ''}. File drive-mu tidak tersentuh.`,
+      okText: 'Hapus sisa',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await this.tg.deleteMessages(orphans.map((o) => o.id));
+      toast(`${orphans.length} file sisa dihapus.`);
+    } catch (e) {
+      toast('Gagal menghapus: ' + errorText(e), { error: true });
+    }
+  }
+
   async convert(files, toOpen) {
     if (toOpen) {
       const ok = await confirmDialog({
@@ -894,7 +924,9 @@ export class DriveView {
     try {
       await this.drive.flush(); // index first, so it never points at deleted messages
       if (msgIds.length) await this.tg.deleteMessages(msgIds);
-      toast('Dihapus permanen.');
+      const left = msgIds.length ? await this.tg.getMessages(msgIds) : [];
+      if (left.length) toast(`${left.length} pesan masih ada di Telegram. Coba menu akun › Bersihkan sisa di Telegram.`, { error: true });
+      else toast('Dihapus permanen.');
     } catch (e) {
       toast('Gagal menghapus: ' + errorText(e), { error: true });
     }

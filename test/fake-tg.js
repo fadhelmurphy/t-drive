@@ -56,6 +56,12 @@ export class FakeTg {
   async getMessages(ids) {
     return ids.map((i) => this.messages.get(i)).filter((m) => m && m.chan === this.chanId);
   }
+  async listDocuments() {
+    return [...this.messages.values()]
+      .filter((m) => m.chan === this.chanId)
+      .sort((a, b) => b.id - a.id)
+      .map((m) => ({ id: m.id, name: m.media.document.attributes[0].fileName, size: m.media.document.size }));
+  }
   async deleteMessages(ids) {
     for (const i of ids) this.messages.delete(i);
   }

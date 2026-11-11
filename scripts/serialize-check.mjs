@@ -27,6 +27,8 @@ await st.joinInvite(hash);
 const map = await tg.forwardTo(st, [1]);
 if (map.get(1) !== 77) throw new Error('forward map');
 await st.deleteChannel();
+tg.client.invoke = async (r) => { r.getBytes(); reqs.push(r.className); return { messages: [] }; };
+await tg.listDocuments();
 tg.client.getSender = async (dc) => ({ dcId: dc });
 tg.client.invokeWithSender = async (r) => { r.getBytes(); reqs.push(r.className); return new Api.upload.File({ type: new Api.storage.FileUnknown(), mtime: 0, bytes: Buffer.from([1]) }); };
 await tg.fetchWindow(new Api.Document({ id: 5n, accessHash: 6n, fileReference: Buffer.from([1]), date: 0, mimeType: 'x', size: 10n, dcId: 2, attributes: [] }), 1048576);

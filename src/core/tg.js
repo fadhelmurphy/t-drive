@@ -236,7 +236,7 @@ export class Tg {
   }
 
   /** Send an uploaded file as a document to the storage channel. Returns Api.Message. */
-  async sendDocument({ fileId, totalParts, big, name, mimeType = 'application/octet-stream', inline = false }) {
+  async sendDocument({ fileId, totalParts, big, name, mimeType = 'application/octet-stream', inline = false, randomId = generateRandomLong(true) }) {
     const file = big
       ? new Api.InputFileBig({ id: fileId, parts: totalParts, name })
       : new Api.InputFile({ id: fileId, parts: totalParts, name, md5Checksum: '' });
@@ -250,7 +250,7 @@ export class Tg {
           attributes: [new Api.DocumentAttributeFilename({ fileName: name })],
         }),
         message: '',
-        randomId: generateRandomLong(true),
+        randomId, // fixed per logical send, so a retried request cannot post a duplicate
         silent: true,
       }),
     );
@@ -272,6 +272,30 @@ export class Tg {
         }),
       );
       for (const m of res.messages) if (m instanceof Api.Message) out.push(m);
+    }
+    return out;
+  }
+
+  /** Every document message in the channel: [{ id, name, size }]. Newest first. */
+  async listDocuments() {
+    const out = [];
+    let offsetId = 0;
+    for (;;) {
+      const res = await withRetry(() =>
+        this.client.invoke(
+          new Api.messages.GetHistory({ peer: this.peer, offsetId, offsetDate: 0, addOffset: 0, limit: 100, maxId: 0, minId: 0, hash: bigInt(0) }),
+        ),
+      );
+      const msgs = res.messages || [];
+      if (!msgs.length) break;
+      for (const m of msgs) {
+        const d = m.media?.document;
+        if (!d) continue;
+        const a = (d.attributes || []).find((x) => x.className === 'DocumentAttributeFilename');
+        out.push({ id: m.id, name: a?.fileName || '', size: Number(d.size) });
+      }
+      offsetId = msgs[msgs.length - 1].id;
+      if (msgs.length < 100) break;
     }
     return out;
   }

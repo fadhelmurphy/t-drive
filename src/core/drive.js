@@ -43,7 +43,8 @@ export async function uploadBuffer(tg, bytes, name) {
     const piece = bytes.subarray(p * TG_UPLOAD_PART, (p + 1) * TG_UPLOAD_PART);
     await withRetry(() => tg.savePart({ fileId, part: p, totalParts, bytes: piece, big }));
   }
-  return withRetry(() => tg.sendDocument({ fileId, totalParts, big, name }));
+  const randomId = tg.newFileId();
+  return withRetry(() => tg.sendDocument({ fileId, totalParts, big, name, randomId }));
 }
 
 export class DriveStore extends EventTarget {
@@ -189,6 +190,24 @@ export class DriveStore extends EventTarget {
         this.saving = false;
       }
     });
+  }
+
+  /** Telegram message ids the index knows about (file parts + the index itself). */
+  referencedMessageIds() {
+    const ids = new Set(this.indexMsgId ? [this.indexMsgId] : []);
+    for (const it of Object.values(this.index.items)) for (const p of it.parts || []) ids.add(p);
+    return ids;
+  }
+
+  /** Documents in the channel that nothing in the index points to (leftovers of failed or duplicated sends). */
+  async findOrphans() {
+    await this.flush();
+    if (this.dirty || this.saving) throw new Error('Tunggu penyimpanan selesai dulu.');
+    const known = this.referencedMessageIds();
+    const pinned = await withRetry(() => this.tg.pinnedId());
+    if (pinned) known.add(pinned);
+    const all = await this.tg.listDocuments();
+    return all.filter((d) => !known.has(d.id));
   }
 
   lock() {

@@ -205,7 +205,8 @@ export class Uploader extends EventTarget {
         inline: n === 1 && /^(image|video|audio)\//.test(mime),
       };
     } else doc = { name: `${uid()}.bin` };
-    const msg = await withRetry(() => this.tg.sendDocument({ fileId, totalParts, big, ...doc }), { onWait, signal });
+    const randomId = this.tg.newFileId();
+    const msg = await withRetry(() => this.tg.sendDocument({ fileId, totalParts, big, randomId, ...doc }), { onWait, signal });
     return msg.id;
   }
 }
