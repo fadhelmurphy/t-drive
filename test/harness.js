@@ -1,3 +1,4 @@
+import '../src/polyfills.js';
 // Dev-only UI harness: runs the real UI against an in-memory fake Telegram.
 import '../src/styles.css';
 import { FakeTg } from './fake-tg.js';

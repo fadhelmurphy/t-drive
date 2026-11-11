@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import { createRequire } from 'node:module';
+
+const BUFFER = createRequire(import.meta.url).resolve('buffer/');
 
 const CSP = [
   "default-src 'self'",
@@ -28,7 +31,12 @@ export default defineConfig({
   plugins: [
     nodePolyfills({
       include: ['buffer', 'process', 'util', 'os', 'path', 'events', 'stream', 'crypto', 'net', 'constants'],
-      globals: { Buffer: true, process: true, global: true },
+      globals: { Buffer: false, process: true, global: true },
+      // Exactly ONE Buffer class: GramJS checks `instanceof Buffer`. The plugin's
+      // own shim ships separate ESM and CJS builds (two classes), so we point every
+      // `require('buffer')` at the npm package and set globalThis.Buffer from it
+      // in src/polyfills.js.
+      overrides: { buffer: BUFFER },
     }),
     cspPlugin,
   ],
@@ -36,6 +44,8 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
+    // HARNESS=1 also builds the fake-Telegram UI harness to test the prod bundle.
+    rollupOptions: process.env.HARNESS ? { input: ['index.html', 'test/harness.html'] } : undefined,
   },
   test: {
     environment: 'node',

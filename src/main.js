@@ -1,3 +1,4 @@
+import './polyfills.js';
 import './styles.css';
 import { start } from './app.js';
 import { h } from './ui/dom.js';
