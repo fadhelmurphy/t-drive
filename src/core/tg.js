@@ -11,6 +11,19 @@ const CHANNEL_ABOUT = 'Penyimpanan terenkripsi untuk T-Drive. Jangan hapus atau 
 
 const toBuf = (u8) => Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength);
 
+/** Largest downloadable size of a Telegram photo: { type, size } or null. */
+export function bestPhotoSize(photo) {
+  if (!photo || photo.className !== 'Photo') return null;
+  let best = null;
+  for (const sz of photo.sizes || []) {
+    let size = 0;
+    if (sz.className === 'PhotoSizeProgressive') size = sz.sizes[sz.sizes.length - 1];
+    else if (sz.className === 'PhotoSize') size = sz.size;
+    if (size > (best?.size || 0)) best = { type: sz.type, size };
+  }
+  return best;
+}
+
 export function isFloodWait(e) {
   return typeof e?.seconds === 'number' && /FLOOD/.test(e?.errorMessage || e?.message || '');
 }
@@ -216,12 +229,13 @@ export class Tg {
     for (let i = 0; i < uniq.length; i += 100) {
       const batch = uniq.slice(i, i + 100);
       const src = await this.getMessages(batch);
-      const have = new Set(src.filter((m) => m.media?.document).map((m) => m.id));
+      const media = (m) => m.media?.document || m.media?.photo;
+      const have = new Set(src.filter((m) => media(m)).map((m) => m.id));
       const missing = batch.filter((x) => !have.has(x));
       if (missing.length) {
         throw new Error(`Potongan file tidak ada lagi di Telegram (pesan ${missing.slice(0, 5).join(', ')}). File itu perlu diunggah ulang.`);
       }
-      const byDoc = new Map(src.map((m) => [m.media.document.id.toString(), m.id]));
+      const byDoc = new Map(src.map((m) => [media(m).id.toString(), m.id]));
       const res = await this.client.invoke(
         new Api.messages.ForwardMessages({
           fromPeer: this.peer,
@@ -234,8 +248,9 @@ export class Tg {
       );
       for (const u of res.updates || []) {
         const m = u.message;
-        if ((u instanceof Api.UpdateNewChannelMessage || u instanceof Api.UpdateNewMessage) && m?.media?.document) {
-          const old = byDoc.get(m.media.document.id.toString());
+        const md = m?.media?.document || m?.media?.photo;
+        if ((u instanceof Api.UpdateNewChannelMessage || u instanceof Api.UpdateNewMessage) && md) {
+          const old = byDoc.get(md.id.toString());
           if (old) out.set(old, m.id);
         }
       }
@@ -299,7 +314,7 @@ export class Tg {
     return out;
   }
 
-  /** Document messages in the channel (newest first), scanning at most `max` messages. */
+  /** Document and photo messages in the channel (newest first), scanning at most `max` messages. */
   async listDocuments({ max = Infinity } = {}) {
     const out = [];
     let scanned = 0;
@@ -315,9 +330,36 @@ export class Tg {
       for (const m of msgs) {
         scanned++;
         const d = m.media?.document;
-        if (!d) continue;
-        const a = (d.attributes || []).find((x) => x.className === 'DocumentAttributeFilename');
-        out.push({ id: m.id, name: a?.fileName || '', size: Number(d.size), mime: d.mimeType, date: (m.date || 0) * 1000 });
+        if (d) {
+          const a = (d.attributes || []).find((x) => x.className === 'DocumentAttributeFilename');
+          out.push({ id: m.id, name: a?.fileName || '', size: Number(d.size), mime: d.mimeType, date: (m.date || 0) * 1000 });
+          continue;
+        }
+        const best = bestPhotoSize(m.media?.photo);
+        if (best) out.push({ id: m.id, name: '', size: best.size, mime: 'image/jpeg', date: (m.date || 0) * 1000, thumb: best.type });
+      }
+      offsetId = msgs[msgs.length - 1].id;
+      if (msgs.length < 100 || scanned >= max) break;
+    }
+    return out;
+  }
+
+  /** Ids of "pinned a message" service notices (left by earlier index saves). */
+  async listPinNotices({ max = 1000 } = {}) {
+    const out = [];
+    let scanned = 0;
+    let offsetId = 0;
+    for (;;) {
+      const res = await withRetry(() =>
+        this.client.invoke(
+          new Api.messages.GetHistory({ peer: this.peer, offsetId, offsetDate: 0, addOffset: 0, limit: 100, maxId: 0, minId: 0, hash: bigInt(0) }),
+        ),
+      );
+      const msgs = res.messages || [];
+      if (!msgs.length) break;
+      for (const m of msgs) {
+        scanned++;
+        if (m instanceof Api.MessageService && m.action?.className === 'MessageActionPinMessage') out.push(m.id);
       }
       offsetId = msgs[msgs.length - 1].id;
       if (msgs.length < 100 || scanned >= max) break;
@@ -332,7 +374,10 @@ export class Tg {
   }
 
   async pin(id) {
-    await this.client.invoke(new Api.messages.UpdatePinnedMessage({ peer: this.peer, id, silent: true }));
+    const res = await this.client.invoke(new Api.messages.UpdatePinnedMessage({ peer: this.peer, id, silent: true }));
+    // Telegram posts a "pinned a message" notice in channels; delete it so the channel stays clean.
+    const notices = (res?.updates || []).map((u) => u.message).filter((m) => m instanceof Api.MessageService).map((m) => m.id);
+    if (notices.length) this.deleteMessages(notices).catch(() => {});
   }
 
   async pinnedId() {
@@ -346,13 +391,10 @@ export class Tg {
    * Fetch up to 1 MiB of a document at an offset aligned to 1 MiB.
    * Throws errors with errorMessage FILE_REFERENCE_EXPIRED etc. to the caller.
    */
-  async fetchWindow(doc, offset) {
-    const location = new Api.InputDocumentFileLocation({
-      id: doc.id,
-      accessHash: doc.accessHash,
-      fileReference: doc.fileReference,
-      thumbSize: '',
-    });
+  async fetchWindow(doc, offset, thumbSize = '') {
+    // Photos (sent from the Telegram app without "as file") are fetched by size type.
+    const Loc = doc.className === 'Photo' ? Api.InputPhotoFileLocation : Api.InputDocumentFileLocation;
+    const location = new Loc({ id: doc.id, accessHash: doc.accessHash, fileReference: doc.fileReference, thumbSize });
     const req = new Api.upload.GetFile({ location, offset: bigInt(offset), limit: CIPHER_BLOCK, precise: false });
     let sender = await this.client.getSender(doc.dcId);
     for (let hop = 0; hop < 3; hop++) {

@@ -172,7 +172,7 @@ export class DriveIndex {
     return existing || this.createFolder(n, parent);
   }
 
-  addFile({ name, parent = ROOT, size, mime, key, nonce, parts, lastModified, open = false }) {
+  addFile({ name, parent = ROOT, size, mime, key, nonce, parts, lastModified, open = false, thumb = null }) {
     this.assertFolder(parent);
     const now = Date.now();
     const item = {
@@ -183,6 +183,7 @@ export class DriveIndex {
       size,
       mime: mime || 'application/octet-stream',
       ...(open ? { open: true } : { key, nonce }),
+      ...(thumb ? { thumb } : {}), // Telegram photo size type: the part is a photo, not a document
       parts,
       created: now,
       modified: lastModified || now,
@@ -202,6 +203,7 @@ export class DriveIndex {
     delete it.key;
     delete it.nonce;
     delete it.open;
+    delete it.thumb;
     if (open) it.open = true;
     else Object.assign(it, { key, nonce });
     it.parts = parts;

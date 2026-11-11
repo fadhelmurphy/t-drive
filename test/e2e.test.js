@@ -319,4 +319,40 @@ describe('end to end with fake Telegram', () => {
     expect(again.index.children(ROOT)).toEqual([]);
     expect((await tg.listDocuments()).filter((d) => d.name === 't-drive-index.bin').length).toBe(1);
   }, 90000);
+
+  it('imports a photo sent from the Telegram app, reads and shares it', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const img = randomBytes(CIPHER_BLOCK + 321);
+    const id = tg.server.next++;
+    tg.messages.set(id, { id, chan: tg.chanId, media: { photo: { id, thumbOnly: true, data: img } } });
+
+    expect(await store.importFromTelegram()).toEqual({ added: 1, skipped: 0 });
+    const folder = store.index.children(ROOT).find((i) => i.name === 'Dari Telegram');
+    const f = store.index.children(folder.id)[0];
+    expect(f).toMatchObject({ open: true, thumb: 'y', size: img.length, mime: 'image/jpeg', parts: [id] });
+    expect(f.name).toMatch(/^Foto \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.jpg$/);
+    expect(await new Reader(tg).readAll(f)).toEqual(img);
+    await store.flush();
+    expect(await store.importFromTelegram()).toEqual({ added: 0, skipped: 0 });
+
+    // Photos can be shared and copied like any file.
+    const share = await createShare({ tg, drive: store, ids: [f.id], name: 'foto' });
+    const guest = new FakeTg(tg);
+    guest.chanId = 'guest-main';
+    const { shareTg, manifest } = await openShare({ tg: guest, invite: share.invite, key: share.key });
+    const sf = Object.values(manifest.items).find((i) => i.type === 'file');
+    expect(sf.thumb).toBe('y');
+    expect(await new Reader(shareTg).readAll(sf)).toEqual(img);
+
+    // Converting to encrypted re-uploads it as a normal document.
+    const up = new Uploader(tg, store);
+    up.convert([store.index.get(f.id)], false, new Reader(tg));
+    await waitIdle(up);
+    const c = store.index.get(f.id);
+    expect(c.thumb).toBeUndefined();
+    expect(c.open).toBeUndefined();
+    expect(await new Reader(tg).readAll(c)).toEqual(img);
+  }, 90000);
 });

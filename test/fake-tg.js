@@ -61,7 +61,14 @@ export class FakeTg {
       .filter((m) => m.chan === this.chanId)
       .sort((a, b) => b.id - a.id)
       .slice(0, max)
-      .map((m) => ({ id: m.id, name: m.media.document.attributes[0].fileName, size: m.media.document.size, mime: m.media.document.mimeType, date: 1700000000000 }));
+      .map((m) =>
+        m.media.photo
+          ? { id: m.id, name: '', size: m.media.photo.data.length, mime: 'image/jpeg', date: 1700000000000, thumb: 'y' }
+          : { id: m.id, name: m.media.document.attributes[0].fileName, size: m.media.document.size, mime: m.media.document.mimeType, date: 1700000000000 },
+      );
+  }
+  async listPinNotices() {
+    return [];
   }
   async deleteMessages(ids) {
     for (const i of ids) this.messages.delete(i);
@@ -101,12 +108,14 @@ export class FakeTg {
       const m = this.messages.get(old);
       if (!m || m.chan !== this.chanId) throw new Error('MESSAGE_ID_INVALID');
       const id = this.server.next++;
-      this.messages.set(id, { id, chan: dest.chanId, media: { document: { ...m.media.document, id } } });
+      const media = m.media.photo ? { photo: { ...m.media.photo, id } } : { document: { ...m.media.document, id } };
+      this.messages.set(id, { id, chan: dest.chanId, media });
       out.set(old, id);
     }
     return out;
   }
-  async fetchWindow(doc, offset) {
+  async fetchWindow(doc, offset, thumbSize) {
+    if (doc.thumbOnly && !thumbSize) throw new Error('PHOTO_THUMB_REQUIRED');
     if (offset % CIPHER_BLOCK) throw new Error('OFFSET_INVALID');
     if (!this.messages.has(doc.id)) throw new Error('FILE_ID_INVALID');
     this.fetches++;

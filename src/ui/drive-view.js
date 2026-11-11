@@ -875,14 +875,17 @@ export class DriveView {
     if (this.uploader.active) return toast('Tunggu unggahan selesai dulu.', { error: true });
     const t = toast('Memindai channel Telegram…', { timeout: 0 });
     let orphans;
+    let notices = [];
     try {
       orphans = await this.drive.findOrphans();
+      notices = await this.tg.listPinNotices();
+      if (notices.length) await this.tg.deleteMessages(notices); // harmless "pinned a message" clutter
     } catch (e) {
       t.remove();
       return toast('Gagal memindai: ' + errorText(e), { error: true });
     }
     t.remove();
-    if (!orphans.length) return toast('Tidak ada file sisa. Semuanya sesuai dengan indeks.');
+    if (!orphans.length) return toast(notices.length ? `${notices.length} pemberitahuan “pinned” dibersihkan. Tidak ada file sisa.` : 'Tidak ada file sisa. Semuanya sesuai dengan indeks.');
     const size = orphans.reduce((s, o) => s + o.size, 0);
     const names = orphans.slice(0, 5).map((o) => o.name || '(tanpa nama)').join(', ');
     const ok = await confirmDialog({

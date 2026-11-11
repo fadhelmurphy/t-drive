@@ -9,6 +9,13 @@ import { Mutex } from './util.js';
 export const INDEX_NAME = 't-drive-index.bin';
 export const IMPORT_FOLDER = 'Dari Telegram';
 
+/** Photos have no file name in Telegram: "Foto 2026-11-11 20.16.jpg". */
+function photoName(ts) {
+  const d = new Date(ts || Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  return `Foto ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}.${p(d.getMinutes())}.${p(d.getSeconds())}.jpg`;
+}
+
 /** Names T-Drive itself gives to the blobs it uploads (the index and obfuscated encrypted parts). */
 export const isOwnBlob = (name) => name === INDEX_NAME || /^[0-9a-z]{16}\.bin$/.test(name || '');
 
@@ -265,7 +272,7 @@ export class DriveStore extends EventTarget {
       this.mutate((ix) => {
         const folder = ix.ensureFolder(IMPORT_FOLDER, ROOT);
         for (const d of ok) {
-          ix.addFile({ name: d.name || 'Tanpa nama', parent: folder.id, size: d.size, mime: d.mime, open: true, parts: [d.id], lastModified: d.date || undefined });
+          ix.addFile({ name: d.name || photoName(d.date), parent: folder.id, size: d.size, mime: d.mime, open: true, thumb: d.thumb, parts: [d.id], lastModified: d.date || undefined });
         }
       });
     }

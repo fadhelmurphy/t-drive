@@ -32,5 +32,7 @@ await tg.listDocuments();
 tg.client.getSender = async (dc) => ({ dcId: dc });
 tg.client.invokeWithSender = async (r) => { r.getBytes(); reqs.push(r.className); return new Api.upload.File({ type: new Api.storage.FileUnknown(), mtime: 0, bytes: Buffer.from([1]) }); };
 await tg.fetchWindow(new Api.Document({ id: 5n, accessHash: 6n, fileReference: Buffer.from([1]), date: 0, mimeType: 'x', size: 10n, dcId: 2, attributes: [] }), 1048576);
+await tg.fetchWindow(new Api.Photo({ id: 5n, accessHash: 6n, fileReference: Buffer.from([1]), date: 0, sizes: [], dcId: 2 }), 0, 'y');
+await tg.pin(3);
 console.log('OK', reqs.join(','));
 process.exit(0);

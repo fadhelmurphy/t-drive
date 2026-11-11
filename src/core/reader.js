@@ -26,7 +26,7 @@ export class Reader {
   async doc(msgId, refresh = false) {
     if (!refresh && this.docs.has(msgId)) return this.docs.get(msgId);
     const [m] = await withRetry(() => this.tg.getMessages([msgId]));
-    const d = m?.media?.document;
+    const d = m?.media?.document || m?.media?.photo;
     if (!d) throw new Error('Potongan file hilang dari Telegram (pesan ' + msgId + ')');
     this.docs.set(msgId, d);
     return d;
@@ -60,11 +60,11 @@ export class Reader {
     let doc = await this.doc(msgId);
     let cipher;
     try {
-      cipher = await withRetry(() => this.tg.fetchWindow(doc, offset));
+      cipher = await withRetry(() => this.tg.fetchWindow(doc, offset, item.thumb));
     } catch (e) {
       if (!/FILE_REFERENCE/.test(e?.errorMessage || e?.message || '')) throw e;
       doc = await this.doc(msgId, true);
-      cipher = await withRetry(() => this.tg.fetchWindow(doc, offset));
+      cipher = await withRetry(() => this.tg.fetchWindow(doc, offset, item.thumb));
     }
     if (cipher.length < expected) throw new Error('Data dari Telegram terpotong');
     if (item.open) return cipher.slice(0, expected);

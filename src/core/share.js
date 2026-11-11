@@ -36,7 +36,7 @@ function collect(index, ids) {
 
 function pick(it) {
   const o = { id: it.id, type: it.type, name: it.name };
-  if (it.type === 'file') Object.assign(o, { size: it.size, mime: it.mime, modified: it.modified, parts: it.parts, ...(it.open ? { open: true } : { key: it.key, nonce: it.nonce }) });
+  if (it.type === 'file') Object.assign(o, { size: it.size, mime: it.mime, modified: it.modified, parts: it.parts, ...(it.open ? { open: true } : { key: it.key, nonce: it.nonce }), ...(it.thumb ? { thumb: it.thumb } : {}) });
   return o;
 }
 
@@ -172,6 +172,7 @@ export async function copyToDrive({ shareTg, myTg, drive, manifest, ids, parent 
         key: it.key,
         nonce: it.nonce,
         open: !!it.open,
+        thumb: it.thumb,
         parts: it.parts.map((p) => map.get(p)),
         lastModified: it.modified,
       });
