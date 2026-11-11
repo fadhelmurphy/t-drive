@@ -74,6 +74,7 @@ export class FakeTg {
     for (const i of ids) this.messages.delete(i);
   }
   async pin(id) {
+    if (this.failPin) throw new Error('PIN_FAILED');
     this.server.pins.set(this.chanId, id);
   }
   async pinnedId() {

@@ -92,6 +92,8 @@ export class DriveView {
     this.drive.addEventListener('saving', () => this.setSave('Menyimpan…'));
     this.drive.addEventListener('saved', () => this.setSave('Tersimpan di Telegram'));
     this.drive.addEventListener('save-error', (e) => this.onSaveError(e.detail));
+    this.drive.addEventListener('slow', (e) => toast(`Menyimpan terasa lambat (${e.detail || 'menunggu Telegram'}). Tunggu dulu, jangan muat ulang.`, { timeout: 8000 }));
+    this.drive.addEventListener('wait', (e) => toast(`Telegram meminta menunggu ${e.detail} detik sebelum lanjut…`, { timeout: 8000 }));
     this.uploader.addEventListener('change', () => {
       if (!this.statsFrame) this.statsFrame = requestAnimationFrame(() => ((this.statsFrame = 0), this.renderNav()));
     });
@@ -986,6 +988,7 @@ export class DriveView {
 
   async purge(msgIds) {
     this.state.selection.clear();
+    const busy = toast('Menghapus dari Telegram…', { timeout: 0 });
     try {
       await this.drive.flush(); // index first, so it never points at deleted messages
       if (msgIds.length) await this.tg.deleteMessages(msgIds);
@@ -994,6 +997,8 @@ export class DriveView {
       else toast('Dihapus permanen.');
     } catch (e) {
       toast('Gagal menghapus: ' + errorText(e), { error: true });
+    } finally {
+      busy.remove();
     }
   }
 

@@ -46,16 +46,25 @@ export async function downloadDocument(tg, doc) {
 }
 
 /** Upload an in-memory buffer as a document. Returns Api.Message. */
-export async function uploadBuffer(tg, bytes, name) {
+export async function uploadBuffer(tg, bytes, name, opts = {}) {
   const big = bytes.length > TG_BIG_FILE;
   const totalParts = Math.max(1, Math.ceil(bytes.length / TG_UPLOAD_PART));
   const fileId = tg.newFileId();
   for (let p = 0; p < totalParts; p++) {
     const piece = bytes.subarray(p * TG_UPLOAD_PART, (p + 1) * TG_UPLOAD_PART);
-    await withRetry(() => tg.savePart({ fileId, part: p, totalParts, bytes: piece, big }));
+    await withRetry(() => tg.savePart({ fileId, part: p, totalParts, bytes: piece, big }), opts);
   }
   const randomId = tg.newFileId();
-  return withRetry(() => tg.sendDocument({ fileId, totalParts, big, name, randomId }));
+  return withRetry(() => tg.sendDocument({ fileId, totalParts, big, name, randomId }), opts);
+}
+
+/** Reject if `fn` takes longer than `ms` (a stalled socket must not freeze the UI forever). */
+export function withTimeout(fn, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(Object.assign(new Error(`TIMEOUT ${label}`), { errorMessage: `TIMEOUT ${label}` })), ms);
+  });
+  return Promise.race([fn(), timeout]).finally(() => clearTimeout(t));
 }
 
 export class DriveStore extends EventTarget {
@@ -77,25 +86,53 @@ export class DriveStore extends EventTarget {
     this.dispatchEvent(new CustomEvent(type, { detail }));
   }
 
-  /** Locate the current index message (pinned, else most recent by name). */
+  /**
+   * Locate the current index message: the newest index document in the channel. The pin is
+   * only a hint, since pinning is best effort and may lag behind the upload.
+   */
   async findIndexMessage() {
-    const pinned = await withRetry(() => this.tg.pinnedId());
+    let best = null;
+    const pinned = await withRetry(() => withTimeout(() => this.tg.pinnedId(), 30000, 'pinnedId'));
     if (pinned) {
       const [m] = await this.tg.getMessages([pinned]);
-      if (m && docName(m) === INDEX_NAME) return m;
+      if (m && docName(m) === INDEX_NAME) best = m;
     }
-    // The pin can be missing (unpinned by hand, or lost): never start a new drive on top of
-    // an existing one. Fall back to the newest index document in the channel and re-pin it.
-    const docs = await withRetry(() => this.tg.listDocuments({ max: 300 }));
+    const docs = await withRetry(() => withTimeout(() => this.tg.listDocuments({ max: 300 }), 45000, 'listDocuments'));
     const d = docs.find((x) => x.name === INDEX_NAME);
-    if (d) {
+    if (d && (!best || d.id > best.id)) {
       const [m] = await this.tg.getMessages([d.id]);
       if (m && docName(m) === INDEX_NAME) {
-        await this.tg.pin(m.id).catch(() => {});
-        return m;
+        best = m;
+        this._pinWant = m.id; // repair a lost or lagging pin
+        this._schedulePin();
       }
     }
-    return null;
+    return best;
+  }
+
+  /** Id of the newest index message (max of the pin and the latest in recent history). */
+  async latestIndexId() {
+    const pinned = await withRetry(() => withTimeout(() => this.tg.pinnedId(), 30000, 'pinnedId'));
+    const docs = await withRetry(() => withTimeout(() => this.tg.listDocuments({ max: 30 }), 45000, 'listDocuments'));
+    const recent = docs.find((x) => x.name === INDEX_NAME)?.id || 0;
+    return Math.max(pinned || 0, recent) || null;
+  }
+
+  _schedulePin() {
+    if (this._pinning) return;
+    this._pinning = (async () => {
+      try {
+        while (this._pinWant && this._pinWant !== this._pinned) {
+          const id = this._pinWant;
+          await withRetry(() => withTimeout(() => this.tg.pin(id), 30000, 'pin'));
+          this._pinned = id;
+        }
+      } catch (e) {
+        console.warn('Menyematkan indeks gagal (tidak fatal)', e);
+      } finally {
+        this._pinning = null;
+      }
+    })();
   }
 
   async exists() {
@@ -164,8 +201,8 @@ export class DriveStore extends EventTarget {
   /** True if another device saved a newer index than the one we hold. */
   async isStale() {
     if (this.dirty || this.saving) return false;
-    const pinned = await withRetry(() => this.tg.pinnedId());
-    return !!pinned && pinned !== this.indexMsgId;
+    const latest = await this.latestIndexId();
+    return !!latest && latest !== this.indexMsgId;
   }
 
   /** Apply a mutation, notify the UI, and persist (debounced). */
@@ -211,17 +248,27 @@ export class DriveStore extends EventTarget {
     return this.mutex.run(async () => {
       this.saving = true;
       this.emit('saving');
+      const step = (t) => {
+        this.step = t;
+        this.emit('step', t);
+      };
+      const onWait = (sec) => this.emit('wait', sec);
+      const slow = setTimeout(() => this.emit('slow', this.step), 12000);
       try {
         if (this.indexMsgId) {
-          const pinned = await withRetry(() => this.tg.pinnedId());
-          if (pinned && pinned !== this.indexMsgId) throw new ConflictError();
+          step('memeriksa perubahan dari perangkat lain');
+          const latest = await this.latestIndexId();
+          if (latest && latest !== this.indexMsgId) throw new ConflictError();
         }
         this.dirty = false;
+        step('mengunggah indeks');
         const blob = await seal(this.key, this.salt, this.index.data);
-        const msg = await uploadBuffer(this.tg, blob, INDEX_NAME);
-        await withRetry(() => this.tg.pin(msg.id));
+        const msg = await withTimeout(() => uploadBuffer(this.tg, blob, INDEX_NAME, { onWait }), 90000, 'upload indeks');
+        // The new index is the truth as soon as it exists; pinning and cleaning up come after.
         const old = this.indexMsgId;
         this.indexMsgId = msg.id;
+        this._pinWant = msg.id;
+        this._schedulePin();
         if (old) this.tg.deleteMessages([old]).catch(() => {});
         this.emit('saved');
       } catch (e) {
@@ -229,6 +276,8 @@ export class DriveStore extends EventTarget {
         this.emit('save-error', e);
         throw e;
       } finally {
+        clearTimeout(slow);
+        this.step = '';
         this.saving = false;
       }
     });

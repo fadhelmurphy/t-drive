@@ -355,4 +355,29 @@ describe('end to end with fake Telegram', () => {
     expect(c.open).toBeUndefined();
     expect(await new Reader(tg).readAll(c)).toEqual(img);
   }, 90000);
+
+  it('a failing pin never blocks saving; the newest index wins and the pin heals later', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    await new Promise((r) => setTimeout(r, 20));
+    tg.failPin = true;
+    store.mutate((ix) => ix.createFolder('Setelah pin gagal'));
+    await store.flush(); // must not throw or hang
+    store.mutate((ix) => ix.createFolder('Lagi'));
+    await store.flush(); // second save: no false conflict although the pin is stale
+    await new Promise((r) => setTimeout(r, 30));
+
+    const other = new DriveStore(tg);
+    expect(await other.exists()).toBe(true);
+    await other.open('pw');
+    expect(other.index.children(ROOT).map((i) => i.name).sort()).toEqual(['Lagi', 'Setelah pin gagal']);
+    expect(await store.isStale()).toBe(false);
+    tg.failPin = false;
+    store.mutate((ix) => ix.createFolder('Pin pulih'));
+    await store.flush();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(await tg.pinnedId()).toBe(store.indexMsgId);
+    expect((await tg.listDocuments()).filter((d) => d.name === 't-drive-index.bin').length).toBe(1);
+  }, 60000);
 });
