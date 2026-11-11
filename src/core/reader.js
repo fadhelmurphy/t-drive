@@ -1,6 +1,6 @@
 // Random-access reads of encrypted files: fetch 1 MiB cipher windows from
 // Telegram, decrypt them, and serve arbitrary plaintext byte ranges.
-import { TAG_SIZE, blockCount, locateBlock, plainBlockLength, rangeToBlocks } from './blocks.js';
+import { TAG_SIZE, blockCount, blockSizeOf, locateBlock, plainBlockLength, rangeToBlocks } from './blocks.js';
 import { decryptBlock, fromB64, importFileKey } from './crypto.js';
 import { withRetry } from './tg.js';
 import { Lru } from './util.js';
@@ -55,7 +55,8 @@ export class Reader {
   async _load(item, i) {
     const { part, offset } = locateBlock(i);
     const msgId = item.parts[part];
-    const expected = plainBlockLength(item.size, i) + TAG_SIZE;
+    const bs = blockSizeOf(item);
+    const expected = plainBlockLength(item.size, i, bs) + (item.open ? 0 : TAG_SIZE);
     let doc = await this.doc(msgId);
     let cipher;
     try {
@@ -66,6 +67,7 @@ export class Reader {
       cipher = await withRetry(() => this.tg.fetchWindow(doc, offset));
     }
     if (cipher.length < expected) throw new Error('Data dari Telegram terpotong');
+    if (item.open) return cipher.slice(0, expected);
     try {
       return await decryptBlock(await this.key(item), fromB64(item.nonce), i, cipher.subarray(0, expected));
     } catch {
@@ -75,8 +77,9 @@ export class Reader {
 
   /** Async iterator over plaintext bytes [start, end] (inclusive). */
   async *range(item, start, end, signal) {
-    const n = blockCount(item.size);
-    for (const { block, from, to } of rangeToBlocks(item.size, start, end)) {
+    const bs = blockSizeOf(item);
+    const n = blockCount(item.size, bs);
+    for (const { block, from, to } of rangeToBlocks(item.size, start, end, bs)) {
       signal?.throwIfAborted();
       const current = this.block(item, block);
       for (let a = 1; a <= READ_AHEAD && block + a < n; a++) {

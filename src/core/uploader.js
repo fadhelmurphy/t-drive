@@ -2,6 +2,8 @@
 // Telegram as one or more documents ("parts"). Memory use stays at roughly
 // WORKERS x 2 MiB regardless of file size.
 import {
+  CIPHER_BLOCK,
+  OPEN_BLOCK,
   PLAIN_BLOCK,
   TG_BIG_FILE,
   TG_UPLOAD_PART,
@@ -33,14 +35,15 @@ export class Uploader extends EventTarget {
     this.dispatchEvent(new Event('change'));
   }
 
-  /** entries: [{ file: File, parent: folderId }] */
-  add(entries) {
+  /** entries: [{ file: File, parent: folderId }]. open: store unencrypted, visible in Telegram. */
+  add(entries, { open = false } = {}) {
     for (const { file, parent } of entries) {
       this.tasks.push({
         id: uid(),
         file,
         parent,
         name: file.name,
+        open,
         size: file.size,
         loaded: 0,
         status: 'queued',
@@ -93,11 +96,13 @@ export class Uploader extends EventTarget {
     this.emit();
     const sent = [];
     try {
-      const rawKey = randomBytes(32);
-      const nonce = randomBytes(8);
-      const key = await importFileKey(rawKey);
+      const open = !!t.open;
+      const bs = open ? OPEN_BLOCK : PLAIN_BLOCK;
+      const rawKey = open ? null : randomBytes(32);
+      const nonce = open ? null : randomBytes(8);
+      const key = open ? null : await importFileKey(rawKey);
       const size = t.file.size;
-      const nParts = partCount(size);
+      const nParts = partCount(size, bs);
 
       for (let p = 0; p < nParts; p++) {
         sent.push(await this.uploadPart(t, key, nonce, p));
@@ -109,8 +114,7 @@ export class Uploader extends EventTarget {
           parent: t.parent,
           size,
           mime: t.file.type || guessMime(t.name),
-          key: toB64(rawKey),
-          nonce: toB64(nonce),
+          ...(open ? { open: true } : { key: toB64(rawKey), nonce: toB64(nonce) }),
           parts: sent,
           lastModified: t.file.lastModified,
         }),
@@ -134,12 +138,14 @@ export class Uploader extends EventTarget {
   async uploadPart(t, key, nonce, p) {
     const size = t.file.size;
     const signal = t.ctrl.signal;
-    const { first, last } = partBlocks(size, p);
-    const cipherSize = partCipherSize(size, p);
+    const open = !!t.open;
+    const bs = open ? OPEN_BLOCK : PLAIN_BLOCK;
+    const { first, last } = partBlocks(size, p, bs);
+    const cipherSize = partCipherSize(size, p, bs);
     const totalParts = Math.ceil(cipherSize / TG_UPLOAD_PART);
     const big = cipherSize > TG_BIG_FILE;
     const fileId = this.tg.newFileId();
-    const piecesPerBlock = Math.ceil((PLAIN_BLOCK + 16) / TG_UPLOAD_PART); // = 2
+    const piecesPerBlock = Math.ceil(CIPHER_BLOCK / TG_UPLOAD_PART); // = 2
     let next = first;
     let failed = false;
     const onWait = (s) => {
@@ -153,9 +159,9 @@ export class Uploader extends EventTarget {
         if (failed) return;
         const i = next++;
         if (i > last) return;
-        const len = plainBlockLength(size, i);
-        const plain = new Uint8Array(await t.file.slice(i * PLAIN_BLOCK, i * PLAIN_BLOCK + len).arrayBuffer());
-        const cipher = await encryptBlock(key, nonce, i, plain);
+        const len = plainBlockLength(size, i, bs);
+        const plain = new Uint8Array(await t.file.slice(i * bs, i * bs + len).arrayBuffer());
+        const cipher = open ? plain : await encryptBlock(key, nonce, i, plain);
         const base = (i - first) * piecesPerBlock;
         for (let j = 0; j * TG_UPLOAD_PART < cipher.length; j++) {
           const bytes = cipher.subarray(j * TG_UPLOAD_PART, (j + 1) * TG_UPLOAD_PART);
@@ -174,11 +180,18 @@ export class Uploader extends EventTarget {
       });
     await Promise.all(Array.from({ length: Math.min(WORKERS, last - first + 1) }, guarded));
     signal.throwIfAborted();
-    // Obfuscated name: nothing about the real file leaks into Telegram.
-    const msg = await withRetry(() => this.tg.sendDocument({ fileId, totalParts, big, name: `${uid()}.bin` }), {
-      onWait,
-      signal,
-    });
+    // Encrypted: obfuscated name, nothing about the file leaks. Open: real name and type.
+    let doc;
+    if (open) {
+      const mime = t.file.type || guessMime(t.name);
+      const n = partCount(size, bs);
+      doc = {
+        name: n > 1 ? `${t.name}.part${p + 1}` : t.name,
+        mimeType: mime,
+        inline: n === 1 && /^(image|video|audio)\//.test(mime),
+      };
+    } else doc = { name: `${uid()}.bin` };
+    const msg = await withRetry(() => this.tg.sendDocument({ fileId, totalParts, big, ...doc }), { onWait, signal });
     return msg.id;
   }
 }

@@ -17,20 +17,27 @@ export const BLOCKS_PER_PART = LAYOUT.blocksPerPart;
 export const TG_UPLOAD_PART = 512 * 1024; // Telegram upload part size
 export const TG_BIG_FILE = 10 * 1024 * 1024; // > this needs SaveBigFilePart
 
-export function blockCount(size) {
+// "Open" files (visible in Telegram) are stored unencrypted with 1 MiB blocks,
+// so every layout helper takes an optional block size `bs` (default: encrypted).
+export const OPEN_BLOCK = CIPHER_BLOCK;
+
+/** Block size for an index item: open files are unencrypted. */
+export const blockSizeOf = (item) => (item?.open ? OPEN_BLOCK : PLAIN_BLOCK);
+
+export function blockCount(size, bs = PLAIN_BLOCK) {
   if (!Number.isFinite(size) || size < 0) throw new RangeError('invalid size');
-  return Math.ceil(size / PLAIN_BLOCK);
+  return Math.ceil(size / bs);
 }
 
-export function partCount(size) {
-  return Math.ceil(blockCount(size) / LAYOUT.blocksPerPart);
+export function partCount(size, bs = PLAIN_BLOCK) {
+  return Math.ceil(blockCount(size, bs) / LAYOUT.blocksPerPart);
 }
 
 /** Plaintext length of block `i` of a file of `size` bytes. */
-export function plainBlockLength(size, i) {
-  const n = blockCount(size);
+export function plainBlockLength(size, i, bs = PLAIN_BLOCK) {
+  const n = blockCount(size, bs);
   if (i < 0 || i >= n) throw new RangeError('block out of range');
-  return i === n - 1 ? size - i * PLAIN_BLOCK : PLAIN_BLOCK;
+  return i === n - 1 ? size - i * bs : bs;
 }
 
 /** Where block `i` lives: which part, and byte offset inside that part. */
@@ -42,8 +49,8 @@ export function locateBlock(i) {
 }
 
 /** Block index range [first, last] contained in part `p`. */
-export function partBlocks(size, p) {
-  const n = blockCount(size);
+export function partBlocks(size, p, bs = PLAIN_BLOCK) {
+  const n = blockCount(size, bs);
   const first = p * LAYOUT.blocksPerPart;
   const last = Math.min(n, first + LAYOUT.blocksPerPart) - 1;
   if (first > last) throw new RangeError('part out of range');
@@ -51,10 +58,11 @@ export function partBlocks(size, p) {
 }
 
 /** Encrypted byte size of part `p`. */
-export function partCipherSize(size, p) {
-  const { first, last } = partBlocks(size, p);
+export function partCipherSize(size, p, bs = PLAIN_BLOCK) {
+  const { first, last } = partBlocks(size, p, bs);
+  const tag = CIPHER_BLOCK - bs;
   let total = 0;
-  for (let i = first; i <= last; i++) total += plainBlockLength(size, i) + TAG_SIZE;
+  for (let i = first; i <= last; i++) total += plainBlockLength(size, i, bs) + tag;
   return total;
 }
 
@@ -63,18 +71,18 @@ export function partCipherSize(size, p) {
  * Returns [{ block, from, to }] where from/to are inclusive offsets
  * inside the decrypted block.
  */
-export function rangeToBlocks(size, start, end) {
+export function rangeToBlocks(size, start, end, bs = PLAIN_BLOCK) {
   if (size === 0) return [];
   if (start < 0 || end >= size || start > end) throw new RangeError('bad range');
   const out = [];
-  const first = Math.floor(start / PLAIN_BLOCK);
-  const last = Math.floor(end / PLAIN_BLOCK);
+  const first = Math.floor(start / bs);
+  const last = Math.floor(end / bs);
   for (let b = first; b <= last; b++) {
-    const base = b * PLAIN_BLOCK;
+    const base = b * bs;
     out.push({
       block: b,
       from: b === first ? start - base : 0,
-      to: b === last ? end - base : plainBlockLength(size, b) - 1,
+      to: b === last ? end - base : plainBlockLength(size, b, bs) - 1,
     });
   }
   return out;

@@ -3,7 +3,7 @@ import { FakeTg } from './fake-tg.js';
 import { DriveStore, ConflictError } from '../src/core/drive.js';
 import { Uploader } from '../src/core/uploader.js';
 import { Reader } from '../src/core/reader.js';
-import { LAYOUT, PLAIN_BLOCK } from '../src/core/blocks.js';
+import { CIPHER_BLOCK, LAYOUT, PLAIN_BLOCK } from '../src/core/blocks.js';
 import { WrongPassphraseError, randomBytes } from '../src/core/crypto.js';
 import { ROOT } from '../src/core/drive-index.js';
 
@@ -101,5 +101,39 @@ describe('end to end with fake Telegram', () => {
     expect(t.status).toBe('canceled');
     await new Promise((r) => setTimeout(r, 20));
     expect(tg.messages.size).toBe(before);
+  }, 60000);
+
+  it('open mode: stores plain bytes with real name/mime, reads back any range', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('passphrase-uji');
+    const size = CIPHER_BLOCK * 4 + 777; // 5 blocks -> 2 parts at 3 blocks/part
+    const data = randomBytes(size);
+    const up = new Uploader(tg, store);
+    up.add([{ file: new File([data], 'liburan.mp4', { type: 'video/mp4' }), parent: ROOT }], { open: true });
+    up.add([{ file: new File([data.slice(0, 5000)], 'foto.jpg', { type: 'image/jpeg' }), parent: ROOT }], { open: true });
+    await waitIdle(up);
+    expect(up.tasks.map((t) => t.status)).toEqual(['done', 'done']);
+
+    const [big, small] = store.index.children(ROOT).sort((a, b) => b.size - a.size);
+    expect(big.open).toBe(true);
+    expect(big.key).toBeUndefined();
+    expect(big.parts.length).toBe(2);
+
+    const docs = big.parts.map((id) => tg.messages.get(id).media.document);
+    expect(docs[0].attributes[0].fileName).toBe('liburan.mp4.part1');
+    expect(docs[0].mimeType).toBe('video/mp4');
+    // Telegram holds the raw bytes: first part is byte-identical to the file prefix.
+    expect(docs[0].data).toEqual(data.slice(0, docs[0].data.length));
+    const sdoc = tg.messages.get(small.parts[0]).media.document;
+    expect(sdoc.attributes[0].fileName).toBe('foto.jpg');
+    expect(sdoc.inline).toBe(true);
+
+    const reader = new Reader(tg);
+    expect(await reader.readAll(big)).toEqual(data);
+    const s = CIPHER_BLOCK * 3 - 5, e = CIPHER_BLOCK * 3 + 9; // across the part boundary
+    const pieces = [];
+    for await (const c of reader.range(big, s, e)) pieces.push(...c);
+    expect(Uint8Array.from(pieces)).toEqual(data.slice(s, e + 1));
   }, 60000);
 });

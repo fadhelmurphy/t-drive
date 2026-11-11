@@ -249,8 +249,9 @@ export class DriveView {
       this.openMenu(r.left, r.bottom + 4, [
         { label: 'Folder baru', icon: 'folderPlus', run: () => this.newFolder() },
         { sep: true },
-        { label: 'Upload file', icon: 'upload', run: () => this.fileInput.click() },
-        { label: 'Upload folder', icon: 'uploadFolder', run: () => this.folderInput.click() },
+        { label: 'Upload file', icon: 'upload', run: () => ((this.nextOpen = false), this.fileInput.click()) },
+        { label: 'Upload folder', icon: 'uploadFolder', run: () => ((this.nextOpen = false), this.folderInput.click()) },
+        { label: 'Upload file terbuka (terlihat di Telegram)', icon: 'upload', run: () => ((this.nextOpen = true), this.fileInput.click()) },
       ]);
     });
     this.navEl.replaceChildren(
@@ -315,8 +316,9 @@ export class DriveView {
       e.preventDefault();
       this.openMenu(e.clientX, e.clientY, [
         { label: 'Folder baru', icon: 'folderPlus', run: () => this.newFolder() },
-        { label: 'Upload file', icon: 'upload', run: () => this.fileInput.click() },
-        { label: 'Upload folder', icon: 'uploadFolder', run: () => this.folderInput.click() },
+        { label: 'Upload file', icon: 'upload', run: () => ((this.nextOpen = false), this.fileInput.click()) },
+        { label: 'Upload folder', icon: 'uploadFolder', run: () => ((this.nextOpen = false), this.folderInput.click()) },
+        { label: 'Upload file terbuka (terlihat di Telegram)', icon: 'upload', run: () => ((this.nextOpen = true), this.fileInput.click()) },
       ]);
     });
     const scroll = this.mainEl.querySelector('.content')?.scrollTop || 0;
@@ -826,13 +828,16 @@ export class DriveView {
   }
 
   pickFiles(input) {
+    // The "terbuka" menu item sets nextOpen; a cancelled picker is reset on the next normal pick.
+    const open = !!this.nextOpen;
+    this.nextOpen = false;
     const files = [...input.files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
     input.value = '';
-    this.enqueue(files);
+    this.enqueue(files, { open });
   }
 
   /** entries: [{ file, path }] where path may contain folders ("a/b/c.txt"). */
-  enqueue(entries) {
+  enqueue(entries, { open = false } = {}) {
     if (!entries.length) return;
     const base = this.uploadTarget();
     const jobs = this.attempt(() =>
@@ -851,7 +856,7 @@ export class DriveView {
         });
       }),
     );
-    if (jobs) this.uploader.add(jobs);
+    if (jobs) this.uploader.add(jobs, { open });
   }
 
   makeDropOverlay() {

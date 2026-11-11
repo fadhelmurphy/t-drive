@@ -158,7 +158,7 @@ export class DriveIndex {
     return existing || this.createFolder(n, parent);
   }
 
-  addFile({ name, parent = ROOT, size, mime, key, nonce, parts, lastModified }) {
+  addFile({ name, parent = ROOT, size, mime, key, nonce, parts, lastModified, open = false }) {
     this.assertFolder(parent);
     const now = Date.now();
     const item = {
@@ -168,8 +168,7 @@ export class DriveIndex {
       parent,
       size,
       mime: mime || 'application/octet-stream',
-      key,
-      nonce,
+      ...(open ? { open: true } : { key, nonce }),
       parts,
       created: now,
       modified: lastModified || now,

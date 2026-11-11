@@ -26,7 +26,7 @@ export class FakeTg {
     if (big && totalParts !== u.totalParts) throw new Error('FILE_PART_COUNT_MISMATCH');
     u.parts.set(part, bytes.slice());
   }
-  async sendDocument({ fileId, totalParts, big, name }) {
+  async sendDocument({ fileId, totalParts, big, name, mimeType = 'application/octet-stream', inline = false }) {
     const u = this.uploads.get(fileId);
     if (!u) throw new Error('FILE_PARTS_INVALID');
     const chunks = [];
@@ -46,7 +46,7 @@ export class FakeTg {
       o += c.length;
     }
     const id = this.nextMsg++;
-    const doc = { id, accessHash: 1, fileReference: 'ref', dcId: 2, size, data, attributes: [{ className: 'DocumentAttributeFilename', fileName: name }] };
+    const doc = { id, mimeType, inline, accessHash: 1, fileReference: 'ref', dcId: 2, size, data, attributes: [{ className: 'DocumentAttributeFilename', fileName: name }] };
     const msg = { id, media: { document: doc } };
     this.messages.set(id, msg);
     this.uploads.delete(fileId);

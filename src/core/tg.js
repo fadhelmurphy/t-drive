@@ -157,7 +157,7 @@ export class Tg {
   }
 
   /** Send an uploaded file as a document to the storage channel. Returns Api.Message. */
-  async sendDocument({ fileId, totalParts, big, name }) {
+  async sendDocument({ fileId, totalParts, big, name, mimeType = 'application/octet-stream', inline = false }) {
     const file = big
       ? new Api.InputFileBig({ id: fileId, parts: totalParts, name })
       : new Api.InputFile({ id: fileId, parts: totalParts, name, md5Checksum: '' });
@@ -166,8 +166,8 @@ export class Tg {
         peer: this.peer,
         media: new Api.InputMediaUploadedDocument({
           file,
-          mimeType: 'application/octet-stream',
-          forceFile: true,
+          mimeType,
+          forceFile: !inline,
           attributes: [new Api.DocumentAttributeFilename({ fileName: name })],
         }),
         message: '',

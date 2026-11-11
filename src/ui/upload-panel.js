@@ -104,7 +104,7 @@ export class UploadPanel {
                 t.status === 'uploading'
                   ? h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { class: 'progress-bar', style: { width: pct + '%' } }))
                   : null,
-                h('span', { class: 'up-status' }, status),
+                h('span', { class: 'up-status' }, t.open ? `Terbuka · ${status}` : status),
               ),
               action,
             );
