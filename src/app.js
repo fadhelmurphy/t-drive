@@ -7,8 +7,8 @@ import { WrongPassphraseError, deriveKey, fromB64, randomBytes, seal, toB64, uns
 import { installStreamBridge, registerStreamWorker } from './core/stream.js';
 import { openShare, parseShareHash } from './core/share.js';
 import { ShareView } from './ui/share-view.js';
-import { askApiCredentials, pickApiCredentials, askPassphrase, runLogin, showLoading } from './ui/auth.js';
-import { errorText } from './ui/dialogs.js';
+import { askApiCredentials, pickApiCredentials, askPassphrase, runLogin, showLoading, showNotice } from './ui/auth.js';
+import { confirmDialog, errorText } from './ui/dialogs.js';
 import { h } from './ui/dom.js';
 import { DriveView } from './ui/drive-view.js';
 
@@ -95,8 +95,44 @@ async function chooseCredentials(active) {
   }
 }
 
+/**
+ * One tab per browser may hold the Telegram session. Two tabs on the same auth key make
+ * Telegram kill it (AUTH_KEY_DUPLICATED), which looks like being logged out at random.
+ */
+async function claimTab(ctx) {
+  if (!navigator.locks) return;
+  const hold = (opts) =>
+    new Promise((resolve) => {
+      navigator.locks
+        .request('tdrive-session', opts, (lock) => {
+          if (!lock) return resolve(false);
+          resolve(true);
+          return new Promise(() => {}); // hold until this tab closes
+        })
+        .catch(() => {
+          // Another tab took over: stop using the session here.
+          ctx.tg?.disconnect();
+          showNotice({ title: 'T-Drive dipakai di tab lain', text: 'Satu sesi hanya boleh aktif di satu tab supaya Telegram tidak memutus login.', button: 'Pakai di tab ini', onClick: () => location.reload() });
+        });
+    });
+  if (await hold({ ifAvailable: true })) return;
+  await new Promise((resolve) =>
+    showNotice({
+      title: 'T-Drive sudah terbuka di tab lain',
+      text: 'Memakai sesi yang sama di dua tab membuat Telegram memutus login. Pakai tab ini saja?',
+      button: 'Pakai di tab ini',
+      onClick: async () => {
+        await hold({ steal: true });
+        resolve();
+      },
+    }),
+  );
+}
+
 export async function start() {
   const streaming = registerStreamWorker();
+  const ctx = { tg: null, drive: null, passphrase: null, userId: null };
+  await claimTab(ctx);
 
   let creds = apiCredentials();
   // With a sealed session the active API ID must stay the same one; otherwise let the user pick.
@@ -104,7 +140,6 @@ export async function start() {
     creds = await chooseCredentials(creds);
   }
 
-  const ctx = { tg: null, drive: null, passphrase: null, userId: null };
   const shareLink = parseShareHash(location.hash);
 
   // 1) Returning user: unlock the locally sealed session with the passphrase.
@@ -171,7 +206,21 @@ export async function start() {
   const me = await ctx.tg.me();
   ctx.userId = me.id.toString();
   const cachedChannel = store.get(LS.channel);
-  const channel = await ctx.tg.ensureChannel(cachedChannel?.userId === ctx.userId ? cachedChannel : null);
+  let channel = await ctx.tg.ensureChannel(cachedChannel?.userId === ctx.userId ? cachedChannel : null, { create: false });
+  if (!channel) {
+    // Never create a second storage channel silently: a missed lookup would orphan the real drive.
+    const ok = await confirmDialog({
+      title: 'Drive lama tidak ditemukan',
+      message:
+        'Channel “T-Drive Storage” tidak ada di akun Telegram ini. Kalau kamu sudah pernah memakai T-Drive, pastikan masuk dengan akun yang sama. Buat drive baru?',
+      okText: 'Buat drive baru',
+    });
+    if (!ok) {
+      await logout(ctx);
+      return;
+    }
+    channel = await ctx.tg.ensureChannel(null);
+  }
   store.set(LS.channel, { ...channel, userId: ctx.userId });
 
   // 3) Open or create the drive.

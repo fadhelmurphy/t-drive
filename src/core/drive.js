@@ -77,6 +77,17 @@ export class DriveStore extends EventTarget {
       const [m] = await this.tg.getMessages([pinned]);
       if (m && docName(m) === INDEX_NAME) return m;
     }
+    // The pin can be missing (unpinned by hand, or lost): never start a new drive on top of
+    // an existing one. Fall back to the newest index document in the channel and re-pin it.
+    const docs = await withRetry(() => this.tg.listDocuments({ max: 300 }));
+    const d = docs.find((x) => x.name === INDEX_NAME);
+    if (d) {
+      const [m] = await this.tg.getMessages([d.id]);
+      if (m && docName(m) === INDEX_NAME) {
+        await this.tg.pin(m.id).catch(() => {});
+        return m;
+      }
+    }
     return null;
   }
 

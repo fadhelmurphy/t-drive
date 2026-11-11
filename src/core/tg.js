@@ -113,8 +113,13 @@ export class Tg {
     this.peer = new Api.InputPeerChannel({ channelId: bigInt(id), accessHash: bigInt(accessHash) });
   }
 
-  /** Find (or create) the private storage channel. `cached` = {id, accessHash}. */
-  async ensureChannel(cached) {
+  /**
+   * Find the private storage channel (or create it when `create` is true).
+   * `cached` = {id, accessHash}. Returns null when nothing was found and `create` is false.
+   * With several channels of that title (e.g. left over from failed attempts) the one that
+   * holds the drive index wins, so a re-login never lands on an empty duplicate.
+   */
+  async ensureChannel(cached, { create = true } = {}) {
     if (cached) {
       try {
         this.useChannel(cached);
@@ -125,14 +130,32 @@ export class Tg {
         /* fall through and search */
       }
     }
+    const found = [];
     for await (const d of this.client.iterDialogs({})) {
       const e = d.entity;
       if (e instanceof Api.Channel && e.creator && e.title === CHANNEL_TITLE && !e.megagroup) {
-        const found = { id: e.id.toString(), accessHash: e.accessHash.toString() };
-        this.useChannel(found);
-        return found;
+        found.push({ id: e.id.toString(), accessHash: e.accessHash.toString() });
       }
     }
+    if (found.length > 1) {
+      for (const c of found) {
+        try {
+          this.useChannel(c);
+          const pin = await this.pinnedId();
+          if (!pin) continue;
+          const [m] = await this.getMessages([pin]);
+          const a = (m?.media?.document?.attributes || []).find((x) => x.className === 'DocumentAttributeFilename');
+          if (a?.fileName === 't-drive-index.bin') return c;
+        } catch {
+          /* try the next one */
+        }
+      }
+    }
+    if (found.length) {
+      this.useChannel(found[0]);
+      return found[0];
+    }
+    if (!create) return null;
     const res = await this.client.invoke(
       new Api.channels.CreateChannel({ title: CHANNEL_TITLE, about: CHANNEL_ABOUT, broadcast: true }),
     );

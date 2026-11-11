@@ -276,4 +276,19 @@ describe('end to end with fake Telegram', () => {
     await store.flush();
     expect(await store.importFromTelegram()).toEqual({ added: 0, skipped: 0 });
   }, 60000);
+
+  it('finds the drive index even when the pin is lost, instead of starting a new drive', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    store.mutate((ix) => ix.createFolder('Penting'));
+    await store.flush();
+    tg.server.pins.delete(tg.chanId); // pin vanished
+    expect(await tg.pinnedId()).toBeNull();
+    const again = new DriveStore(tg);
+    expect(await again.exists()).toBe(true);
+    await again.open('pw');
+    expect(again.index.children(ROOT).map((i) => i.name)).toEqual(['Penting']);
+    expect(await tg.pinnedId()).toBe(again.indexMsgId); // re-pinned
+  }, 60000);
 });

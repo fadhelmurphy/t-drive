@@ -7,7 +7,15 @@ export function logo(size = 36) {
   return h('span', { class: 'logo', style: { width: size + 'px', height: size + 'px' } }, icon('cloud', size * 0.62, { fill: 'currentColor', strokeWidth: '0' }));
 }
 
+let loadingTimer = 0;
+
+/** Plain message screen with one button. */
+export function showNotice({ title, text, button, onClick }) {
+  screen(title, text, h('button', { class: 'btn btn-primary btn-block', onclick: onClick }, button));
+}
+
 function screen(title, subtitle, ...content) {
+  clearTimeout(loadingTimer);
   const r = root();
   r.replaceChildren(
     h(
@@ -26,9 +34,12 @@ function screen(title, subtitle, ...content) {
 }
 
 export function showLoading(text = 'Memuat…') {
+  clearTimeout(loadingTimer);
+  const hint = h('div', { class: 'loading-hint', hidden: true }, h('p', { class: 'muted' }, 'Masih memuat… Jaringan mungkin lambat. Kalau macet, muat ulang. Datamu tidak hilang.'), h('button', { class: 'btn btn-outline', onclick: () => location.reload() }, 'Muat ulang'));
   root().replaceChildren(
-    h('main', { class: 'auth' }, h('div', { class: 'loading', role: 'status' }, h('span', { class: 'spinner' }), h('span', null, text))),
+    h('main', { class: 'auth' }, h('div', { class: 'loading', role: 'status' }, h('span', { class: 'spinner' }), h('span', null, text)), hint),
   );
+  loadingTimer = setTimeout(() => (hint.hidden = false), 20000);
 }
 
 function field(label, attrs) {
