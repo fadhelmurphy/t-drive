@@ -276,9 +276,10 @@ export class Tg {
     return out;
   }
 
-  /** Every document message in the channel: [{ id, name, size }]. Newest first. */
-  async listDocuments() {
+  /** Document messages in the channel (newest first), scanning at most `max` messages. */
+  async listDocuments({ max = Infinity } = {}) {
     const out = [];
+    let scanned = 0;
     let offsetId = 0;
     for (;;) {
       const res = await withRetry(() =>
@@ -289,13 +290,14 @@ export class Tg {
       const msgs = res.messages || [];
       if (!msgs.length) break;
       for (const m of msgs) {
+        scanned++;
         const d = m.media?.document;
         if (!d) continue;
         const a = (d.attributes || []).find((x) => x.className === 'DocumentAttributeFilename');
-        out.push({ id: m.id, name: a?.fileName || '', size: Number(d.size) });
+        out.push({ id: m.id, name: a?.fileName || '', size: Number(d.size), mime: d.mimeType, date: (m.date || 0) * 1000 });
       }
       offsetId = msgs[msgs.length - 1].id;
-      if (msgs.length < 100) break;
+      if (msgs.length < 100 || scanned >= max) break;
     }
     return out;
   }

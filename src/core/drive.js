@@ -1,12 +1,16 @@
 // Persistence of the encrypted drive index inside the Telegram storage channel.
 // The index is sealed with the passphrase key and kept as the channel's pinned document.
-import { DriveIndex } from './drive-index.js';
+import { DriveIndex, ROOT } from './drive-index.js';
 import { deriveKey, randomBytes, readSealedSalt, seal, unseal } from './crypto.js';
-import { CIPHER_BLOCK, TG_BIG_FILE, TG_UPLOAD_PART } from './blocks.js';
+import { CIPHER_BLOCK, LAYOUT, TG_BIG_FILE, TG_UPLOAD_PART } from './blocks.js';
 import { withRetry } from './tg.js';
 import { Mutex } from './util.js';
 
 export const INDEX_NAME = 't-drive-index.bin';
+export const IMPORT_FOLDER = 'Dari Telegram';
+
+/** Names T-Drive itself gives to the blobs it uploads (the index and obfuscated encrypted parts). */
+export const isOwnBlob = (name) => name === INDEX_NAME || /^[0-9a-z]{16}\.bin$/.test(name || '');
 
 export class ConflictError extends Error {
   constructor() {
@@ -207,7 +211,34 @@ export class DriveStore extends EventTarget {
     const pinned = await withRetry(() => this.tg.pinnedId());
     if (pinned) known.add(pinned);
     const all = await this.tg.listDocuments();
-    return all.filter((d) => !known.has(d.id));
+    return all.filter((d) => !known.has(d.id) && isOwnBlob(d.name));
+  }
+
+  /**
+   * Files posted straight into the storage channel from a Telegram app show up as
+   * documents with real names. Add them to the drive as "open" files.
+   * `busy()` lets the caller veto while uploads are in flight (their messages are not indexed yet).
+   */
+  async importFromTelegram({ max, busy = () => false } = {}) {
+    if (busy() || this.dirty || this.saving || !this.key) return { added: 0, skipped: 0, busy: true };
+    const docs = await this.tg.listDocuments({ max });
+    if (busy() || this.dirty || this.saving) return { added: 0, skipped: 0, busy: true };
+    const known = this.referencedMessageIds();
+    const pinned = await withRetry(() => this.tg.pinnedId());
+    if (busy() || this.dirty || this.saving) return { added: 0, skipped: 0, busy: true };
+    if (pinned) known.add(pinned);
+    const fresh = docs.filter((d) => !known.has(d.id) && !isOwnBlob(d.name));
+    const maxSize = LAYOUT.blocksPerPart * CIPHER_BLOCK; // one message = one part
+    const ok = fresh.filter((d) => d.size > 0 && d.size <= maxSize);
+    if (ok.length) {
+      this.mutate((ix) => {
+        const folder = ix.ensureFolder(IMPORT_FOLDER, ROOT);
+        for (const d of ok) {
+          ix.addFile({ name: d.name || 'Tanpa nama', parent: folder.id, size: d.size, mime: d.mime, open: true, parts: [d.id], lastModified: d.date || undefined });
+        }
+      });
+    }
+    return { added: ok.length, skipped: fresh.length - ok.length };
   }
 
   lock() {

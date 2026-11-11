@@ -238,12 +238,42 @@ describe('end to end with fake Telegram', () => {
     expect(await store.findOrphans()).toEqual([]);
     // Simulate a duplicate send that the index never recorded.
     const { uploadBuffer } = await import('../src/core/drive.js');
-    const stray = await uploadBuffer(tg, randomBytes(500), 'stray.bin');
+    const stray = await uploadBuffer(tg, randomBytes(500), 'abcdefghij012345.bin');
     const orphans = await store.findOrphans();
     expect(orphans.map((o) => o.id)).toEqual([stray.id]);
     await tg.deleteMessages(orphans.map((o) => o.id));
     expect(await store.findOrphans()).toEqual([]);
     const reader = new Reader(tg);
     for (const it of store.index.liveFiles()) expect((await reader.readAll(it)).length).toBe(it.size);
+  }, 60000);
+
+  it('imports files posted from the Telegram app as open files, once', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const content = randomBytes(CIPHER_BLOCK + 500);
+    // What the Telegram app does: plain upload + send with the real file name.
+    const fileId = tg.newFileId();
+    for (let p = 0, o = 0; o < content.length; p++, o += 512 * 1024) {
+      await tg.savePart({ fileId, part: p, totalParts: Math.ceil(content.length / (512 * 1024)), bytes: content.subarray(o, o + 512 * 1024), big: false });
+    }
+    const posted = await tg.sendDocument({ fileId, totalParts: Math.ceil(content.length / (512 * 1024)), big: false, name: 'dari-hp.mp4', mimeType: 'video/mp4' });
+
+    expect(await store.importFromTelegram({ busy: () => true })).toMatchObject({ busy: true, added: 0 }); // uploads in flight
+    expect(await store.importFromTelegram()).toEqual({ added: 1, skipped: 0 });
+    const folder = store.index.children(ROOT).find((i) => i.name === 'Dari Telegram');
+    const f = store.index.children(folder.id)[0];
+    expect(f).toMatchObject({ name: 'dari-hp.mp4', open: true, size: content.length, mime: 'video/mp4', parts: [posted.id] });
+    expect(await new Reader(tg).readAll(f)).toEqual(content);
+
+    await store.flush();
+    expect(await store.importFromTelegram()).toEqual({ added: 0, skipped: 0 }); // already indexed
+    expect(await store.findOrphans()).toEqual([]); // and never offered for cleanup
+    // Our own uploads are never re-imported.
+    const up = new Uploader(tg, store);
+    up.add([{ file: new File([randomBytes(1000)], 'x.bin'), parent: ROOT }]);
+    await waitIdle(up);
+    await store.flush();
+    expect(await store.importFromTelegram()).toEqual({ added: 0, skipped: 0 });
   }, 60000);
 });

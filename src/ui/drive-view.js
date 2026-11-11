@@ -5,7 +5,7 @@ import { UploadPanel } from './upload-panel.js';
 import { Preview } from './preview.js';
 import { pickFolder } from './move-dialog.js';
 import { ROOT } from '../core/drive-index.js';
-import { ConflictError } from '../core/drive.js';
+import { ConflictError, IMPORT_FOLDER } from '../core/drive.js';
 import { streamUrl } from '../core/stream.js';
 import { createShare, revokeShare, shareLink } from '../core/share.js';
 import { formatBytes, formatDate } from '../core/util.js';
@@ -107,6 +107,29 @@ export class DriveView {
     }
     this.setSave('Tersimpan di Telegram');
     this.render();
+    // Files sent into the storage channel from Telegram itself appear here automatically.
+    this.autoImport();
+    this.importTimer = setInterval(() => document.visibilityState === 'visible' && this.autoImport(), 45000);
+  }
+
+  async autoImport(manual = false) {
+    if (this.importing) return;
+    this.importing = true;
+    try {
+      const r = await this.drive.importFromTelegram({ max: manual ? undefined : 200, busy: () => this.uploader.active });
+      if (r.added) {
+        toast(`${r.added} file dari Telegram ditambahkan ke “${IMPORT_FOLDER}”.`, {
+          action: 'Buka',
+          onAction: () => this.go('drive', this.index.children(ROOT).find((i) => i.type === 'folder' && i.name === IMPORT_FOLDER)?.id || ROOT),
+        });
+      } else if (manual && r.busy) toast('Sedang sibuk, coba lagi sebentar lagi.');
+      else if (manual && !r.skipped) toast('Tidak ada file baru di Telegram.');
+      if (r.skipped && manual) toast(`${r.skipped} file dilewati (lebih dari ${formatBytes(1900 * 1024 * 1024)}).`, { error: true });
+    } catch (e) {
+      if (manual) toast('Gagal mengimpor: ' + errorText(e), { error: true });
+    } finally {
+      this.importing = false;
+    }
   }
 
   accountButton() {
@@ -118,6 +141,7 @@ export class DriveView {
         { label: name, header: true },
         { label: this.me.phone ? '+' + this.me.phone : this.me.username ? '@' + this.me.username : '', header: true, muted: true },
         { label: 'Muat ulang drive', icon: 'refresh', run: () => this.reloadDrive() },
+        { label: 'Impor file dari Telegram', icon: 'download', run: () => this.autoImport(true) },
         { label: 'Bersihkan sisa di Telegram', icon: 'trash', run: () => this.cleanOrphans() },
         { label: 'Kunci', icon: 'lock', run: () => this.guardActive(this.onLock) },
         { label: 'Keluar', icon: 'logout', run: () => this.confirmLogout() },
