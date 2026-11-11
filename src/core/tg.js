@@ -189,9 +189,15 @@ export class Tg {
    */
   async forwardTo(dest, ids) {
     const out = new Map();
-    for (let i = 0; i < ids.length; i += 100) {
-      const batch = ids.slice(i, i + 100);
+    const uniq = [...new Set(ids)].sort((a, b) => a - b);
+    for (let i = 0; i < uniq.length; i += 100) {
+      const batch = uniq.slice(i, i + 100);
       const src = await this.getMessages(batch);
+      const have = new Set(src.filter((m) => m.media?.document).map((m) => m.id));
+      const missing = batch.filter((x) => !have.has(x));
+      if (missing.length) {
+        throw new Error(`Potongan file tidak ada lagi di Telegram (pesan ${missing.slice(0, 5).join(', ')}). File itu perlu diunggah ulang.`);
+      }
       const byDoc = new Map(src.map((m) => [m.media.document.id.toString(), m.id]));
       const res = await this.client.invoke(
         new Api.messages.ForwardMessages({
@@ -211,7 +217,7 @@ export class Tg {
         }
       }
     }
-    if (out.size !== new Set(ids).size) throw new Error('Sebagian file gagal diteruskan ke channel tujuan');
+    if (out.size !== uniq.length) throw new Error('Sebagian file gagal diteruskan ke channel tujuan');
     return out;
   }
 

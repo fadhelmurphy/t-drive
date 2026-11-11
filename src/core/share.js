@@ -44,14 +44,27 @@ function pick(it) {
  * Create a share for index items. onStep(text) reports progress.
  * Returns the stored share record (already added to the index).
  */
-export async function createShare({ tg, drive, ids, name, onStep = () => {} }) {
+/** Re-throw with the failing step, so Telegram's bare error codes are traceable. */
+function stepError(step, e) {
+  const msg = e?.errorMessage || e?.message || String(e);
+  return Object.assign(new Error(`${step}: ${msg}`), { cause: e });
+}
+
+export async function createShare({ tg, drive, ids, name, onStep: report = () => {} }) {
+  let step = 'Menyiapkan';
+  const onStep = (t) => ((step = t), report(t));
   const items = collect(drive.index, ids);
   const files = Object.values(items).filter((i) => i.type === 'file');
   if (!files.length) throw new Error('Tidak ada file untuk dibagikan');
   const partIds = [...new Set(files.flatMap((f) => f.parts))];
 
   onStep('Membuat channel berbagi…');
-  const ch = await withRetry(() => tg.createShareChannel());
+  let ch;
+  try {
+    ch = await withRetry(() => tg.createShareChannel());
+  } catch (e) {
+    throw stepError(step, e);
+  }
   const shareTg = tg.forChannel(ch);
   try {
     onStep(`Meneruskan ${partIds.length} potongan file…`);
@@ -75,7 +88,7 @@ export async function createShare({ tg, drive, ids, name, onStep = () => {} }) {
     return share;
   } catch (e) {
     shareTg.deleteChannel().catch(() => {});
-    throw e;
+    throw stepError(step, e);
   }
 }
 
@@ -92,13 +105,20 @@ export async function revokeShare({ tg, drive, share }) {
 
 /** Open a share link: join its channel, read and decrypt the manifest. */
 export async function openShare({ tg, invite, key }) {
-  const ch = await withRetry(() => tg.joinInvite(invite));
-  const shareTg = tg.forChannel(ch);
-  const pinned = await withRetry(() => shareTg.pinnedId());
-  if (!pinned) throw new Error('Manifes berbagi tidak ditemukan (share mungkin sudah dicabut)');
-  const [m] = await withRetry(() => shareTg.getMessages([pinned]));
-  if (!m?.media?.document) throw new Error('Manifes berbagi tidak ditemukan');
-  const blob = await downloadDocument(shareTg, m.media.document);
+  let step = 'Bergabung ke channel berbagi';
+  let ch, shareTg, m, blob;
+  try {
+    ch = await withRetry(() => tg.joinInvite(invite));
+    shareTg = tg.forChannel(ch);
+    step = 'Membaca manifes';
+    const pinned = await withRetry(() => shareTg.pinnedId());
+    if (!pinned) throw new Error('Manifes berbagi tidak ditemukan (share mungkin sudah dicabut)');
+    [m] = await withRetry(() => shareTg.getMessages([pinned]));
+    if (!m?.media?.document) throw new Error('Manifes berbagi tidak ditemukan');
+    blob = await downloadDocument(shareTg, m.media.document);
+  } catch (e) {
+    throw stepError(step, e);
+  }
   const k = await importFileKey(fromB64(key));
   let manifest;
   try {
@@ -127,7 +147,12 @@ export async function copyToDrive({ shareTg, myTg, drive, manifest, ids, parent 
   const files = Object.values(chosen).filter((i) => i.type === 'file');
   const partIds = [...new Set(files.flatMap((f) => f.parts))];
   onStep(`Menyalin ${partIds.length} potongan ke drive-mu…`);
-  const map = partIds.length ? await withRetry(() => shareTg.forwardTo(myTg, partIds)) : new Map();
+  let map = new Map();
+  try {
+    if (partIds.length) map = await withRetry(() => shareTg.forwardTo(myTg, partIds));
+  } catch (e) {
+    throw stepError('Menyalin ke drive-mu', e);
+  }
 
   drive.mutate((ix) => {
     const made = new Map([[ROOT, parent]]);
