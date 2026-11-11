@@ -6,6 +6,7 @@ import { Uploader } from './core/uploader.js';
 import { WrongPassphraseError, deriveKey, fromB64, randomBytes, seal, toB64, unseal } from './core/crypto.js';
 import { installStreamBridge, registerStreamWorker } from './core/stream.js';
 import { openShare, parseShareHash } from './core/share.js';
+import { forgetPassphrase, recallPassphrase, rememberPassphrase } from './core/remember.js';
 import { ShareView } from './ui/share-view.js';
 import { askApiCredentials, pickApiCredentials, askPassphrase, runLogin, showLoading, showNotice } from './ui/auth.js';
 import { confirmDialog, errorText } from './ui/dialogs.js';
@@ -145,12 +146,34 @@ export async function start() {
   // 1) Returning user: unlock the locally sealed session with the passphrase.
   if (store.get(LS.session)) {
     let error = '';
+    let remembered = await recallPassphrase();
     for (;;) {
-      const pass = await askPassphrase('unlock', error);
-      if (pass?.logout) {
-        clearLocal();
-        location.reload();
-        return;
+      let pass;
+      let remember = true;
+      const fromMemory = !!remembered;
+      if (fromMemory) {
+        pass = remembered;
+        remembered = null;
+      } else {
+        const r = await askPassphrase('unlock', error);
+        if (r.logout || r.forgot) {
+          if (r.forgot) {
+            const ok = await confirmDialog({
+              title: 'Lupa passphrase?',
+              message:
+                'Passphrase tidak bisa dipulihkan: kunci file terenkripsi ada di dalam indeks yang dikunci olehnya. Kamu akan keluar dari perangkat ini, lalu bisa masuk lagi dan membuat passphrase baru (drive baru yang kosong). File mode terbuka tetap bisa diimpor lagi dari Telegram.',
+              okText: 'Keluar dan reset',
+              danger: true,
+            });
+            if (!ok) continue;
+          }
+          clearLocal();
+          await forgetPassphrase();
+          location.reload();
+          return;
+        }
+        pass = r.pass;
+        remember = r.remember;
       }
       showLoading('Membuka kunci…');
       try {
@@ -158,8 +181,13 @@ export async function start() {
         ctx.passphrase = pass;
         ctx.userId = s.userId;
         ctx.tg = new Tg(creds.apiId, creds.apiHash, s.session);
+        if (!fromMemory) {
+          if (remember) await rememberPassphrase(pass);
+          else await forgetPassphrase();
+        }
         break;
       } catch (e) {
+        if (fromMemory) await forgetPassphrase();
         error = e instanceof WrongPassphraseError ? 'Passphrase salah.' : errorText(e);
       }
     }
@@ -229,25 +257,51 @@ export async function start() {
   let error = '';
   for (;;) {
     let pass = ctx.passphrase;
+    let typed = null;
+    let reset = false;
     if (!pass) {
-      pass = await askPassphrase(exists ? 'open' : 'create', error);
-      if (pass?.logout) {
+      let r = await askPassphrase(exists ? 'open' : 'create', error);
+      if (r.logout) {
         await logout(ctx);
         return;
       }
+      if (r.forgot) {
+        const ok = await confirmDialog({
+          title: 'Reset drive?',
+          message:
+            'Drive lama diganti drive kosong dengan passphrase baru. File terenkripsi lama tidak bisa dibuka lagi (kuncinya hilang bersama passphrase). File mode terbuka bisa diimpor lagi, dan sisa file lama bisa dibersihkan lewat menu akun.',
+          okText: 'Reset drive',
+          danger: true,
+        });
+        if (!ok) continue;
+        r = await askPassphrase('create');
+        if (r.logout) {
+          await logout(ctx);
+          return;
+        }
+        reset = true;
+      }
+      pass = r.pass;
+      typed = r;
     }
-    showLoading(exists ? 'Membuka drive…' : 'Membuat drive…');
+    showLoading(exists && !reset ? 'Membuka drive…' : 'Membuat drive…');
     try {
-      if (exists) await ctx.drive.open(pass);
+      if (reset) await ctx.drive.reset(pass);
+      else if (exists) await ctx.drive.open(pass);
       else await ctx.drive.create(pass);
       if (ctx.passphrase !== pass || !store.get(LS.session)) {
         await sealSession(pass, ctx.tg.session(), ctx.userId);
       }
       ctx.passphrase = pass;
+      if (typed) {
+        if (typed.remember) await rememberPassphrase(pass);
+        else await forgetPassphrase();
+      }
       break;
     } catch (e) {
       // Passphrase may have been changed on another device: ask for the drive one.
       ctx.passphrase = null;
+      await forgetPassphrase();
       error = e instanceof WrongPassphraseError ? 'Passphrase drive salah.' : errorText(e);
     }
   }
@@ -271,6 +325,7 @@ export async function start() {
     me,
     streamOk,
     prefs: { get: () => store.get(LS.prefs) || {}, set: (p) => store.set(LS.prefs, p) },
+    onChangePassphrase: (cur, next) => changePassphrase(ctx, cur, next),
     onLock: () => lock(ctx, uploader),
     onLogout: () => logout(ctx, uploader),
   });
@@ -315,9 +370,20 @@ async function mountShare(ctx, link, streaming) {
   }).mount();
 }
 
+/** Change the passphrase of an unlocked drive. Throws WrongPassphraseError for a wrong current one. */
+async function changePassphrase(ctx, current, next) {
+  await unsealSession(current);
+  await ctx.drive.rekey(next);
+  await sealSession(next, ctx.tg.session(), ctx.userId);
+  const hadRemembered = !!(await recallPassphrase());
+  ctx.passphrase = next;
+  if (hadRemembered) await rememberPassphrase(next);
+}
+
 async function lock(ctx, uploader) {
   if (uploader?.active) return false;
   await ctx.drive.flush().catch(() => {});
+  await forgetPassphrase();
   ctx.drive.lock();
   await ctx.tg.disconnect();
   location.reload();
@@ -327,6 +393,7 @@ async function lock(ctx, uploader) {
 async function logout(ctx, uploader) {
   if (uploader?.active) return false;
   await ctx.drive?.flush().catch(() => {});
+  await forgetPassphrase();
   try {
     await ctx.tg.logout();
   } catch {

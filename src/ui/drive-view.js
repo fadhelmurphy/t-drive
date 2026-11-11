@@ -143,6 +143,7 @@ export class DriveView {
         { label: 'Muat ulang drive', icon: 'refresh', run: () => this.reloadDrive() },
         { label: 'Impor file dari Telegram', icon: 'download', run: () => this.autoImport(true) },
         { label: 'Bersihkan sisa di Telegram', icon: 'trash', run: () => this.cleanOrphans() },
+        { label: 'Ubah passphrase', icon: 'edit', run: () => this.changePassphrase() },
         { label: 'Kunci', icon: 'lock', run: () => this.guardActive(this.onLock) },
         { label: 'Keluar', icon: 'logout', run: () => this.confirmLogout() },
       ]);
@@ -831,6 +832,43 @@ export class DriveView {
     } catch (e) {
       toast('Gagal mencabut: ' + errorText(e), { error: true });
     }
+  }
+
+  changePassphrase() {
+    if (this.uploader.active) return toast('Tunggu unggahan selesai dulu.', { error: true });
+    const mk = (label, ac) => {
+      const input = h('input', { class: 'input', type: 'password', autocomplete: ac, 'aria-label': label });
+      return { input, el: h('div', { class: 'field' }, h('label', { class: 'field-label' }, label), input) };
+    };
+    const cur = mk('Passphrase saat ini', 'current-password');
+    const nw = mk('Passphrase baru (min. 10 karakter)', 'new-password');
+    const nw2 = mk('Ulangi passphrase baru', 'new-password');
+    const err = h('p', { class: 'form-error', role: 'alert' });
+    const ok = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Simpan');
+    const form = h('form', { class: 'modal-body' }, cur.el, nw.el, nw2.el, err);
+    let m;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      if (!cur.input.value) return (err.textContent = 'Isi passphrase saat ini.');
+      if (nw.input.value.length < 10) return (err.textContent = 'Passphrase baru minimal 10 karakter.');
+      if (nw.input.value !== nw2.input.value) return (err.textContent = 'Passphrase baru tidak sama.');
+      ok.disabled = true;
+      try {
+        await this.onChangePassphrase(cur.input.value, nw.input.value);
+        m.close();
+        toast('Passphrase diubah. Perangkat lain akan diminta passphrase baru.');
+      } catch (ex) {
+        ok.disabled = false;
+        err.textContent = ex?.name === 'WrongPassphraseError' ? 'Passphrase saat ini salah.' : errorText(ex);
+      }
+    });
+    m = customDialog({
+      title: 'Ubah passphrase',
+      body: form,
+      actions: [h('button', { type: 'button', class: 'btn btn-text', onclick: () => m.close() }, 'Batal'), h('button', { type: 'button', class: 'btn btn-primary', onclick: () => form.requestSubmit() }, 'Simpan')],
+    });
+    cur.input.focus();
   }
 
   async cleanOrphans() {

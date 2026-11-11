@@ -291,4 +291,32 @@ describe('end to end with fake Telegram', () => {
     expect(again.index.children(ROOT).map((i) => i.name)).toEqual(['Penting']);
     expect(await tg.pinnedId()).toBe(again.indexMsgId); // re-pinned
   }, 60000);
+
+  it('changes the passphrase (files keep working) and resets a forgotten drive', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('lama-lama-lama');
+    const data = randomBytes(5000);
+    const up = new Uploader(tg, store);
+    up.add([{ file: new File([data], 'rahasia.bin'), parent: ROOT }]);
+    await waitIdle(up);
+    await store.flush();
+
+    await store.rekey('baru-baru-baru');
+    const other = new DriveStore(tg);
+    await expect(other.open('lama-lama-lama')).rejects.toBeInstanceOf(WrongPassphraseError);
+    await other.open('baru-baru-baru');
+    const it = other.index.children(ROOT)[0];
+    expect(await new Reader(tg).readAll(it)).toEqual(data); // file keys unchanged
+
+    // Forgot everything: reset gives an empty drive and removes the old index.
+    const lost = new DriveStore(tg);
+    await lost.exists();
+    await lost.reset('segar-segar-segar');
+    expect(lost.index.children(ROOT)).toEqual([]);
+    const again = new DriveStore(tg);
+    await again.open('segar-segar-segar');
+    expect(again.index.children(ROOT)).toEqual([]);
+    expect((await tg.listDocuments()).filter((d) => d.name === 't-drive-index.bin').length).toBe(1);
+  }, 90000);
 });

@@ -212,7 +212,9 @@ async function phoneLogin(tg, state, password, onError) {
  * mode: 'create' (new drive), 'unlock' (returning user), 'open' (existing drive, new device)
  * Resolves with the passphrase, or { logout: true }.
  */
+/** Resolves { pass, remember } | { logout: true } | { forgot: true }. */
 export function askPassphrase(mode, error) {
+  let remember = true;
   const create = mode === 'create';
   const fields = [{ label: 'Passphrase', attrs: { type: 'password', autocomplete: create ? 'new-password' : 'current-password' } }];
   if (create) fields.push({ label: 'Ulangi passphrase', attrs: { type: 'password', autocomplete: 'new-password' } });
@@ -233,10 +235,15 @@ export function askPassphrase(mode, error) {
       if (create && a !== b) return 'Passphrase tidak sama.';
       return null;
     },
-    extra:
-      mode === 'create'
-        ? null
-        : (resolve) =>
-            h('button', { type: 'button', class: 'btn btn-text btn-block', onclick: () => resolve({ logout: true }) }, 'Keluar dari akun Telegram'),
-  }).then((v) => (Array.isArray(v) ? v[0] : v));
+    extra: (resolve) => [
+      h(
+        'label',
+        { class: 'remember-row' },
+        h('input', { type: 'checkbox', checked: true, onchange: (e) => (remember = e.target.checked) }),
+        ' Ingat passphrase 1 jam di browser ini',
+      ),
+      mode === 'create' ? null : h('button', { type: 'button', class: 'btn btn-text btn-block', onclick: () => resolve({ forgot: true }) }, 'Lupa passphrase?'),
+      mode === 'create' ? null : h('button', { type: 'button', class: 'btn btn-text btn-block', onclick: () => resolve({ logout: true }) }, 'Keluar dari akun Telegram'),
+    ],
+  }).then((v) => (Array.isArray(v) ? { pass: v[0], remember } : v));
 }

@@ -121,6 +121,26 @@ export class DriveStore extends EventTarget {
     this.emit('change');
   }
 
+  /** Change the passphrase: re-seal the index with a fresh salt. File keys are untouched. */
+  async rekey(passphrase) {
+    const prev = { salt: this.salt, key: this.key };
+    this.salt = randomBytes(16);
+    this.key = await deriveKey(passphrase, this.salt);
+    try {
+      await this.saveNow();
+    } catch (e) {
+      Object.assign(this, prev);
+      throw e;
+    }
+  }
+
+  /** Forgotten passphrase: replace the index with an empty drive. Encrypted files become unreadable. */
+  async reset(passphrase) {
+    const old = this._indexMsg || (await this.findIndexMessage());
+    await this.create(passphrase);
+    if (old && old.id !== this.indexMsgId) this.tg.deleteMessages([old.id]).catch(() => {});
+  }
+
   /** Reload the index from Telegram (e.g. after another device changed it). */
   async reload() {
     await this.mutex.run(async () => {
