@@ -337,11 +337,13 @@ export class DriveView {
     }
     const area = h('div', { class: 'content' }, content);
     area.addEventListener('click', (e) => {
+      if (this.justMarquee) return void (this.justMarquee = false);
       if (e.target === area || e.target.classList.contains('section-title') || e.target.classList.contains('folder-grid') || e.target.classList.contains('file-grid')) {
         s.selection.clear();
         this.renderMain();
       }
     });
+    this.wireMarquee(area);
     area.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.item')) return;
       if (s.section !== 'drive') return;
@@ -533,6 +535,49 @@ export class DriveView {
 
   selected() {
     return [...this.state.selection].map((id) => this.index.get(id)).filter(Boolean);
+  }
+
+  /** Drag a box on empty space to select every item it touches (Ctrl/Cmd/Shift keeps the old selection). */
+  wireMarquee(area) {
+    const s = this.state;
+    area.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('.item, button, a, input')) return;
+      const base = e.ctrlKey || e.metaKey || e.shiftKey ? new Set(s.selection) : new Set();
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      let box = null;
+      let ids = base;
+      const move = (m) => {
+        if (!box && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
+        if (!box) {
+          box = h('div', { class: 'marquee' });
+          document.body.append(box);
+        }
+        const l = Math.min(x0, m.clientX), t = Math.min(y0, m.clientY);
+        const r = Math.max(x0, m.clientX), b = Math.max(y0, m.clientY);
+        Object.assign(box.style, { left: l + 'px', top: t + 'px', width: r - l + 'px', height: b - t + 'px' });
+        ids = new Set(base);
+        for (const el of area.querySelectorAll('.item[data-id]')) {
+          const q = el.getBoundingClientRect();
+          const hit = q.right > l && q.left < r && q.bottom > t && q.top < b;
+          if (hit) ids.add(el.dataset.id);
+          el.classList.toggle('selected', ids.has(el.dataset.id));
+        }
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        if (!box) return; // a plain click: the click handler clears the selection
+        box.remove();
+        this.justMarquee = true;
+        setTimeout(() => (this.justMarquee = false), 0);
+        s.selection = ids;
+        this.renderMain();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      e.preventDefault();
+    });
   }
 
   wireItem(el, it) {
