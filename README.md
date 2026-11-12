@@ -83,4 +83,4 @@ MIT
 
 ## Unggahan yang bisa dilanjutkan
 
-Bagian file yang sudah terkirim (per ±2 GB) dipertahankan kalau unggahan gagal, jadi **Ulangi** hanya mengirim sisanya. Kalau halaman ditutup atau di-reload di tengah jalan, progresnya tersimpan terenkripsi di browser dan muncul sebagai "unggahan terhenti"; pilih file yang sama lagi (lewat **Lanjutkan** atau Upload biasa) dan T-Drive melanjutkan dari bagian yang tersisa. Nama, ukuran, dan tanggal ubah file harus sama. File di bawah satu bagian tetap diulang dari awal.
+Bagian file yang sudah terkirim (per ±2 GB) dipertahankan kalau unggahan gagal, jadi **Ulangi** hanya mengirim sisanya. Kalau halaman ditutup atau di-reload di tengah jalan, progresnya tersimpan terenkripsi di browser dan muncul sebagai "unggahan terhenti"; pilih file yang sama lagi (lewat **Lanjutkan** atau Upload biasa) dan T-Drive melanjutkan dari bagian yang tersisa. Nama, ukuran, dan tanggal ubah file harus sama. Untuk file yang masih satu bagian, T-Drive mencoba memakai ulang potongan yang sudah ada di Telegram (blok yang selesai dicatat); kalau Telegram sudah membuangnya, bagian itu diulang dari awal.

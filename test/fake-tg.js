@@ -1,6 +1,7 @@
 // In-memory stand-in for Tg that enforces Telegram's upload/download rules.
 import { CIPHER_BLOCK, TG_UPLOAD_PART, TG_BIG_FILE } from '../src/core/blocks.js';
 
+let fileCounter = 1000;
 export class FakeTg {
   /** `shared`: another FakeTg whose Telegram "server" state (messages, invites) this one joins. */
   constructor(shared) {
@@ -19,7 +20,7 @@ export class FakeTg {
     this.left = true;
   }
   newFileId() {
-    return Symbol('file');
+    return BigInt(++fileCounter);
   }
   async savePart({ fileId, part, totalParts, bytes, big }) {
     if (this.failNextSaves > 0) {

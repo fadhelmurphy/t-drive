@@ -61,6 +61,7 @@ export class Uploader extends EventTarget {
         rawKey: r.key ? fromB64(r.key) : null,
         nonce: r.nonce ? fromB64(r.nonce) : null,
         sent: r.sent,
+        cur: r.cur ? { p: r.cur.p, fileId: BigInt(r.cur.fileId), blocks: r.cur.blocks } : null,
         resumable: true,
         loaded: 0,
         status: 'paused',
@@ -69,7 +70,8 @@ export class Uploader extends EventTarget {
         ctrl: new AbortController(),
       };
       await this.verifySent(t);
-      if (!t.sent.length) continue;
+      if (t.cur && t.cur.p !== t.sent.length) t.cur = null; // the part in flight must follow the finished ones
+      if (!t.sent.length && !t.cur?.blocks.length) continue;
       this.setLoaded(t);
       this.tasks.push(t);
     }
@@ -98,12 +100,13 @@ export class Uploader extends EventTarget {
       const { first, last } = partBlocks(t.size, p, bs);
       n += Math.min(t.size, (last + 1) * bs) - first * bs;
     }
+    if (t.cur?.p === t.sent.length) for (const i of t.cur.blocks) n += plainBlockLength(t.size, i, bs);
     t.loaded = n;
   }
 
   persist() {
     if (!this.storage || !this.drive?.key) return;
-    const keep = this.tasks.filter((t) => t.resumable && t.sent?.length && !['done', 'canceled'].includes(t.status));
+    const keep = this.tasks.filter((t) => t.resumable && (t.sent?.length || t.cur?.blocks.length) && !['done', 'canceled'].includes(t.status));
     const records = keep.map((t) => ({
       id: t.id,
       name: t.name,
@@ -115,6 +118,7 @@ export class Uploader extends EventTarget {
       key: t.rawKey ? toB64(t.rawKey) : null,
       nonce: t.nonce ? toB64(t.nonce) : null,
       sent: t.sent,
+      cur: t.cur?.blocks.length ? { p: t.cur.p, fileId: String(t.cur.fileId), blocks: t.cur.blocks } : null,
     }));
     this.persisting = this.persisting
       .then(async () => {
@@ -123,6 +127,15 @@ export class Uploader extends EventTarget {
       })
       .catch(() => {});
     return this.persisting;
+  }
+
+  /** Block progress arrives constantly; write it out at most every couple of seconds. */
+  persistSoon() {
+    if (this.soon) return;
+    this.soon = setTimeout(() => {
+      this.soon = null;
+      this.persist();
+    }, 1500);
   }
 
   /** Continue a paused upload with the same file. Throws if the file differs. */
@@ -141,6 +154,7 @@ export class Uploader extends EventTarget {
     if (!t || ['queued', 'uploading'].includes(t.status)) return;
     if (t.sent?.length) this.tg.deleteMessages(t.sent).catch(() => {});
     t.sent = [];
+    t.cur = null;
     t.status = 'canceled';
     this.tasks = this.tasks.filter((x) => x !== t);
     this.persist();
@@ -202,6 +216,7 @@ export class Uploader extends EventTarget {
       t.status = 'canceled';
       if (t.sent?.length) this.tg.deleteMessages(t.sent).catch(() => {});
       t.sent = [];
+      t.cur = null;
       this.persist();
     }
     this.emit();
@@ -222,6 +237,7 @@ export class Uploader extends EventTarget {
         this.tg.deleteMessages(t.sent).catch(() => {});
         t.sent = [];
       }
+      if (['error', 'canceled'].includes(t.status)) t.cur = null;
     }
     this.tasks = this.tasks.filter((t) => ['queued', 'uploading', 'paused'].includes(t.status));
     this.persist();
@@ -263,6 +279,7 @@ export class Uploader extends EventTarget {
 
       for (let p = t.sent.length; p < nParts; p++) {
         t.sent.push(await this.uploadPart(t, key, t.nonce, p));
+        t.cur = null;
         this.setLoaded(t);
         this.persist();
         this.emit();
@@ -294,12 +311,14 @@ export class Uploader extends EventTarget {
         // canceled: remove what was sent
         if (t.sent.length) this.tg.deleteMessages(t.sent).catch(() => {});
         t.sent = [];
+        t.cur = null;
         t.status = 'canceled';
       } else {
         // failed: keep the finished parts so "Ulangi" continues instead of restarting
-        if (!t.resumable && t.sent.length) {
-          this.tg.deleteMessages(t.sent).catch(() => {});
+        if (!t.resumable) {
+          if (t.sent.length) this.tg.deleteMessages(t.sent).catch(() => {});
           t.sent = [];
+          t.cur = null;
         }
         t.status = 'error';
         t.error = e?.errorMessage || e?.message || String(e);
@@ -310,7 +329,22 @@ export class Uploader extends EventTarget {
     this.emit();
   }
 
+  /** Upload one part; a resumed in-flight part falls back to a fresh start if Telegram dropped its pieces. */
   async uploadPart(t, key, nonce, p) {
+    const resumed = t.cur?.p === p && t.cur.blocks.length > 0;
+    try {
+      return await this.uploadPartOnce(t, key, nonce, p);
+    } catch (e) {
+      const msg = e?.errorMessage || e?.message || '';
+      if (resumed && !t.ctrl.signal.aborted && /FILE_PART|FILE_PARTS_INVALID|FILE_ID/.test(msg)) {
+        t.cur = null;
+        return this.uploadPartOnce(t, key, nonce, p);
+      }
+      throw e;
+    }
+  }
+
+  async uploadPartOnce(t, key, nonce, p) {
     const size = t.file.size;
     const signal = t.ctrl.signal;
     const open = !!t.open;
@@ -320,7 +354,9 @@ export class Uploader extends EventTarget {
     const totalParts = Math.ceil(cipherSize / TG_UPLOAD_PART);
     const big = cipherSize > TG_BIG_FILE;
     this.setLoaded(t); // progress of the part in flight restarts from the finished parts
-    const fileId = this.tg.newFileId();
+    if (t.cur?.p !== p) t.cur = { p, fileId: this.tg.newFileId(), blocks: [] };
+    const fileId = t.cur.fileId;
+    const doneBlocks = new Set(t.cur.blocks);
     const piecesPerBlock = Math.ceil(CIPHER_BLOCK / TG_UPLOAD_PART); // = 2
     let next = first;
     let failed = false;
@@ -336,6 +372,10 @@ export class Uploader extends EventTarget {
         const i = next++;
         if (i > last) return;
         const len = plainBlockLength(size, i, bs);
+        if (doneBlocks.has(i)) {
+          t.loaded += len; // already on Telegram from an earlier attempt
+          continue;
+        }
         const plain = new Uint8Array(await t.file.slice(i * bs, i * bs + len).arrayBuffer());
         const cipher = open ? plain : await encryptBlock(key, nonce, i, plain);
         const base = (i - first) * piecesPerBlock;
@@ -344,6 +384,8 @@ export class Uploader extends EventTarget {
           await withRetry(() => this.tg.savePart({ fileId, part: base + j, totalParts, bytes, big }), { onWait, signal });
         }
         t.loaded += len;
+        t.cur.blocks.push(i);
+        if (t.resumable) this.persistSoon();
         if (t.note) t.note = '';
         this.emit();
       }

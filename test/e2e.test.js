@@ -449,6 +449,7 @@ describe('end to end with fake Telegram', () => {
       expect(t.loaded).toBeGreaterThan(0);
       expect(store.referencedMessageIds().has(t.sent[0])).toBe(true); // protected from the orphan cleaner
 
+      await up2.persisting;
       // "reload": a new uploader restores it as paused
       const up3 = new Uploader(tg, store, { storage });
       await up3.restore();
@@ -475,4 +476,49 @@ describe('end to end with fake Telegram', () => {
       LAYOUT.blocksPerPart = saved;
     }
   }, 60000);
+
+  it('a single-part upload resumes mid-part after a reload by reusing the Telegram file id', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const data = randomBytes(PLAIN_BLOCK * 2 + 77); // 3 blocks = one part
+    const file = new File([data], 'one.bin', { lastModified: 55 });
+    const mem = new Map();
+    const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+
+    const up = new Uploader(tg, store, { storage });
+    const origSave = tg.savePart.bind(tg);
+    let saved = 0;
+    tg.savePart = async (a) => {
+      if (a.part >= 4) throw new Error('DEAD'); // the last block never makes it
+      saved++;
+      return origSave(a);
+    };
+    const origRetry = up.tg; // keep reference
+    up.add([{ file, parent: ROOT }]);
+    await waitIdle(up);
+    expect(up.tasks[0].status).toBe('error');
+    expect(up.tasks[0].sent.length).toBe(0);
+    expect(up.tasks[0].cur.blocks.length).toBeGreaterThan(0);
+    await up.persist();
+
+    const up2 = new Uploader(tg, store, { storage });
+    await up2.restore();
+    expect(up2.tasks[0].status).toBe('paused');
+    expect(up2.tasks[0].loaded).toBeGreaterThan(0);
+
+    tg.savePart = origSave;
+    let resent = 0;
+    tg.savePart = async (a) => (resent++, origSave(a));
+    up2.add([{ file, parent: ROOT }]);
+    await waitIdle(up2);
+    expect(up2.tasks[0].status).toBe('done');
+    expect(resent).toBeLessThan(6); // 3 blocks x 2 pieces = 6 if everything were re-sent
+    const f = store.index.children(ROOT).find((i) => i.name === 'one.bin');
+    const out = new Uint8Array(f.size);
+    let o = 0;
+    for await (const c of new Reader(tg).range(f, 0, f.size - 1)) (out.set(c, o), (o += c.length));
+    expect(out).toEqual(data);
+    void origRetry;
+  }, 120000);
 });
