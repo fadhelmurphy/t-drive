@@ -512,6 +512,8 @@ describe('end to end with fake Telegram', () => {
     await up2.restore();
     expect(up2.tasks[0].status).toBe('paused');
     expect(up2.tasks[0].loaded).toBeGreaterThan(0);
+    let maxLoaded = 0;
+    up2.addEventListener('change', () => (maxLoaded = Math.max(maxLoaded, up2.tasks[0].loaded)));
 
     tg.savePart = origSave;
     let resent = 0;
@@ -519,6 +521,7 @@ describe('end to end with fake Telegram', () => {
     up2.add([{ file, parent: ROOT }]);
     await waitIdle(up2);
     expect(up2.tasks[0].status).toBe('done');
+    expect(maxLoaded).toBeLessThanOrEqual(file.size); // progress never exceeds 100%
     expect(resent).toBeLessThan(6); // 3 blocks x 2 pieces = 6 if everything were re-sent
     const f = store.index.children(ROOT).find((i) => i.name === 'one.bin');
     const out = new Uint8Array(f.size);

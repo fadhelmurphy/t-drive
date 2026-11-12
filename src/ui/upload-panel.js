@@ -96,7 +96,7 @@ export class UploadPanel {
           'ul',
           { class: 'up-list' },
           tasks.map((t) => {
-            const pct = t.size ? Math.floor((t.loaded / t.size) * 100) : t.status === 'done' ? 100 : 0;
+            const pct = t.size ? Math.min(100, Math.floor((t.loaded / t.size) * 100)) : t.status === 'done' ? 100 : 0;
             const status =
               t.status === 'done'
                 ? 'Selesai'

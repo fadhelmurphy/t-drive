@@ -387,10 +387,7 @@ export class Uploader extends EventTarget {
         const i = next++;
         if (i > last) return;
         const len = plainBlockLength(size, i, bs);
-        if (doneBlocks.has(i)) {
-          t.loaded += len; // already on Telegram from an earlier attempt
-          continue;
-        }
+        if (doneBlocks.has(i)) continue; // already on Telegram from an earlier attempt (counted by setLoaded)
         const plain = new Uint8Array(await t.file.slice(i * bs, i * bs + len).arrayBuffer());
         const cipher = open ? plain : await encryptBlock(key, nonce, i, plain);
         const base = (i - first) * piecesPerBlock;
