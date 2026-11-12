@@ -94,11 +94,17 @@ describe('end to end with fake Telegram', () => {
     expect((await reader.readAll(b)).length).toBe(0);
 
     const before = tg.messages.size;
+    // cancel deterministically on the first piece instead of racing a timer
+    const origSave = tg.savePart.bind(tg);
+    let t;
+    tg.savePart = async (a) => {
+      up.cancel(t.id);
+      return origSave(a);
+    };
     up.add([{ file: new File([randomBytes(PLAIN_BLOCK * 4)], 'besar.bin'), parent: ROOT }]);
-    const t = up.tasks[2];
-    await new Promise((r) => setTimeout(r, 5));
-    up.cancel(t.id);
+    t = up.tasks[2];
     await waitIdle(up);
+    tg.savePart = origSave;
     expect(t.status).toBe('canceled');
     await new Promise((r) => setTimeout(r, 20));
     expect(tg.messages.size).toBe(before);
