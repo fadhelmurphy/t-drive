@@ -15,7 +15,8 @@ export class ShareView {
     Object.assign(this, o); // root, manifest, reader, streamOk, shareTg, myTg, drive (nullable), onHome
     this.folder = ROOT;
     this.selection = new Set();
-    this.preview = new Preview({ reader: this.reader, streamOk: this.streamOk, onDownload: (items) => this.download(items) });
+    this.viewOnly = !!this.manifest.readonly;
+    this.preview = new Preview({ reader: this.reader, streamOk: this.streamOk, canDownload: !this.viewOnly, onDownload: (items) => this.download(items) });
   }
 
   mount() {
@@ -51,7 +52,9 @@ export class ShareView {
       ]),
     ];
 
-    const bar = h(
+    const bar = this.viewOnly
+      ? null
+      : h(
       'div',
       { class: 'share-bar' },
       h('button', { class: 'btn btn-outline', onclick: () => this.download(this.filesIn(target)) }, icon('download', 18), chosen.length ? ' Unduh terpilih' : ' Unduh semua di sini'),
@@ -65,7 +68,7 @@ export class ShareView {
           'div',
           { class: 'share-items', role: 'list' },
           items.map((it) => {
-            const check = h('input', {
+            const check = this.viewOnly ? null : h('input', {
               type: 'checkbox',
               'aria-label': `Pilih ${it.name}`,
               checked: this.selection.has(it.id),
@@ -81,7 +84,7 @@ export class ShareView {
               check,
               h('button', { class: 'link', onclick: open }, it.type === 'folder' ? h('span', { class: 'folder-ic' }, folderIcon(20)) : badge(it), h('span', { class: 'item-name', title: it.name }, it.name)),
               h('span', { class: 'muted' }, it.type === 'file' ? formatBytes(it.size) : '—'),
-              it.type === 'file' ? h('button', { class: 'icon-btn', 'aria-label': `Unduh ${it.name}`, onclick: () => this.download([it]) }, icon('download', 18)) : null,
+              it.type === 'file' && !this.viewOnly ? h('button', { class: 'icon-btn', 'aria-label': `Unduh ${it.name}`, onclick: () => this.download([it]) }, icon('download', 18)) : null,
             );
           }),
         )
@@ -105,7 +108,9 @@ export class ShareView {
           'p',
           { class: 'share-note' },
           icon('lock', 14),
-          this.drive
+          this.viewOnly
+            ? ' Link ini hanya untuk dilihat; unduh dan simpan dinonaktifkan oleh pemilik.'
+            : this.drive
             ? ' File tetap terenkripsi; “Simpan” menyalin tanpa mengunggah ulang.'
             : ' Ingin menyimpan ke drive sendiri? Buka T-Drive, masuk, lalu buka link ini lagi.',
         ),

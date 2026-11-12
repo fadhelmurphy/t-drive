@@ -16,7 +16,8 @@ function kind(item) {
 }
 
 export class Preview {
-  constructor({ reader, streamOk, onDownload }) {
+  constructor({ reader, streamOk, onDownload, canDownload = true }) {
+    this.canDownload = canDownload;
     this.reader = reader;
     this.streamOk = streamOk;
     this.onDownload = onDownload;
@@ -86,7 +87,7 @@ export class Preview {
         badge(item),
         h('span', { class: 'preview-name', title: item.name }, item.name),
         h('span', { class: 'preview-size' }, formatBytes(item.size)),
-        h('button', { class: 'icon-btn icon-btn-light', 'aria-label': 'Unduh', onclick: () => this.onDownload([item]) }, icon('download')),
+        this.canDownload ? h('button', { class: 'icon-btn icon-btn-light', 'aria-label': 'Unduh', onclick: () => this.onDownload([item]) }, icon('download')) : null,
       ),
       this.i > 0 ? h('button', { class: 'preview-nav prev', 'aria-label': 'Sebelumnya', onclick: () => this.step(-1) }, icon('left', 28)) : null,
       stage,
@@ -106,8 +107,8 @@ export class Preview {
             'div',
             { class: 'preview-msg' },
             badge(item),
-            h('p', null, 'Pratinjau tidak tersedia untuk jenis file ini.'),
-            h('button', { class: 'btn btn-primary', onclick: () => this.onDownload([item]) }, icon('download', 18), ' Unduh'),
+            h('p', null, this.canDownload ? 'Pratinjau tidak tersedia untuk jenis file ini.' : 'Pratinjau tidak tersedia untuk jenis file ini, dan link ini hanya untuk dilihat.'),
+            this.canDownload ? h('button', { class: 'btn btn-primary', onclick: () => this.onDownload([item]) }, icon('download', 18), ' Unduh') : null,
           ),
         );
         return;

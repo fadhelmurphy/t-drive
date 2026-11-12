@@ -21,6 +21,23 @@ export function parseShareHash(hash) {
   return m ? { invite: m[1], key: toB64(unb64url(m[2])) } : null;
 }
 
+/** "@Ani, t.me/budi 12345" -> ['ani','budi','12345'] (usernames lowercased, no @ / URL). */
+export function parseAllowed(text) {
+  const out = String(text || '')
+    .split(/[\s,;]+/)
+    .map((x) => x.trim().replace(/^(https?:\/\/)?(www\.)?(t|telegram)\.me\//i, '').replace(/^@/, '').toLowerCase())
+    .filter(Boolean);
+  return [...new Set(out)];
+}
+
+/** True when the Telegram account `me` ({id, username}) is in the allowed list (or the list is empty). */
+export function isAllowed(allowed, me) {
+  if (!allowed?.length) return true;
+  const id = String(me?.id ?? '');
+  const un = String(me?.username || '').toLowerCase();
+  return allowed.includes(id) || (!!un && allowed.includes(un));
+}
+
 /** Collect the chosen items and all their live descendants (keeps tree shape). */
 function collect(index, ids) {
   const items = {};
@@ -50,7 +67,7 @@ function stepError(step, e) {
   return Object.assign(new Error(`${step}: ${msg}`), { cause: e });
 }
 
-export async function createShare({ tg, drive, ids, name, onStep: report = () => {} }) {
+export async function createShare({ tg, drive, ids, name, readonly = false, allowed = [], onStep: report = () => {} }) {
   let step = 'Menyiapkan';
   const onStep = (t) => ((step = t), report(t));
   const items = collect(drive.index, ids);
@@ -75,14 +92,14 @@ export async function createShare({ tg, drive, ids, name, onStep: report = () =>
     const rawKey = randomBytes(32);
     const key = await importFileKey(rawKey);
     const salt = randomBytes(16);
-    const manifest = { v: 1, name, items };
+    const manifest = { v: 1, name, items, ...(readonly ? { readonly: true } : {}), ...(allowed.length ? { allowed } : {}) };
     const blob = await seal(key, salt, manifest);
     const msg = await uploadBuffer(shareTg, blob, MANIFEST_NAME);
     await withRetry(() => shareTg.pin(msg.id));
 
     onStep('Membuat link…');
     const invite = await withRetry(() => shareTg.exportInvite());
-    const share = { id: uid(), name, created: Date.now(), channel: ch, invite, key: toB64(rawKey), count: files.length };
+    const share = { id: uid(), name, created: Date.now(), channel: ch, invite, key: toB64(rawKey), count: files.length, ...(readonly ? { readonly: true } : {}), ...(allowed.length ? { allowed } : {}) };
     drive.mutate((ix) => ix.addShare(share));
     await drive.flush();
     return share;
@@ -125,6 +142,13 @@ export async function openShare({ tg, invite, key }) {
     manifest = await unseal(k, blob);
   } catch {
     throw new Error('Kunci link salah atau link rusak');
+  }
+  if (manifest.allowed?.length) {
+    const me = await tg.me();
+    if (!isAllowed(manifest.allowed, me)) {
+      shareTg.leaveChannel?.().catch(() => {});
+      throw new Error('Link ini khusus akun Telegram tertentu, dan akunmu tidak termasuk. Minta pemilik menambahkan username atau ID Telegram-mu.');
+    }
   }
   return { shareTg, manifest };
 }

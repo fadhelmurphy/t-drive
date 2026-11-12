@@ -10,6 +10,13 @@ export class FakeTg {
     this.chanId = 'main';
     this.fetches = 0;
     this.failNextSaves = 0;
+    this.user = { id: 1n, username: 'owner' };
+  }
+  async me() {
+    return this.user;
+  }
+  async leaveChannel() {
+    this.left = true;
   }
   newFileId() {
     return Symbol('file');

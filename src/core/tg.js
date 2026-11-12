@@ -99,6 +99,11 @@ export class Tg {
     await this.client.signInUserWithQrCode({ apiId: this.apiId, apiHash: this.apiHash }, { qrCode, password, onError });
   }
 
+  /** Leave the current channel (best effort; used when a restricted share rejects this account). */
+  async leaveChannel() {
+    return this.client.invoke(new Api.channels.LeaveChannel({ channel: this.channel }));
+  }
+
   async me() {
     return this.client.getMe();
   }

@@ -7,7 +7,7 @@ import { pickFolder } from './move-dialog.js';
 import { ROOT } from '../core/drive-index.js';
 import { ConflictError, IMPORT_FOLDER } from '../core/drive.js';
 import { streamUrl } from '../core/stream.js';
-import { createShare, revokeShare, shareLink } from '../core/share.js';
+import { parseAllowed, createShare, revokeShare, shareLink } from '../core/share.js';
 import { formatBytes, formatDate } from '../core/util.js';
 
 const SECTIONS = [
@@ -818,14 +818,35 @@ export class DriveView {
     if (f && this.state.section !== 'drive') this.go('drive', parent);
   }
 
-  async share(items) {
-    const ok = await confirmDialog({
-      title: 'Bagikan lewat link?',
-      message:
-        'Dibuat channel Telegram khusus berisi salinan file ini (tanpa unggah ulang). Siapa pun yang punya link dan akun Telegram bisa melihat dan mengunduhnya sampai kamu mencabutnya.',
-      okText: 'Buat link',
+  /** Ask how the link should behave: view-only and/or restricted to specific Telegram accounts. */
+  askShareOptions() {
+    return new Promise((resolve) => {
+      let m;
+      const viewOnly = h('input', { type: 'checkbox', id: 'sh-ro' });
+      const who = h('textarea', { class: 'input', rows: 2, placeholder: '@username atau ID Telegram, pisahkan dengan koma', 'aria-label': 'Akun Telegram yang boleh membuka' });
+      const ok = h('button', { class: 'btn btn-primary', onclick: () => m.close({ readonly: viewOnly.checked, allowed: parseAllowed(who.value) }) }, 'Buat link');
+      m = customDialog({
+        title: 'Bagikan lewat link?',
+        body: h(
+          'div',
+          { class: 'modal-body' },
+          h('p', { class: 'modal-text' }, 'Dibuat channel Telegram khusus berisi salinan file ini (tanpa unggah ulang). Pemegang link butuh akun Telegram dan bisa membukanya sampai kamu mencabutnya.'),
+          h('label', { class: 'field-check' }, viewOnly, h('span', null, ' Hanya lihat (sembunyikan tombol unduh dan simpan)')),
+          h('label', { class: 'field-label', for: 'sh-who' }, 'Hanya untuk akun tertentu (opsional)'),
+          who,
+          h('p', { class: 'muted share-hint' }, 'Kedua pembatas ini hanya diterapkan oleh aplikasi T-Drive. Orang yang sengaja bisa mengakalinya, jadi jangan andalkan untuk file yang benar-benar rahasia.'),
+        ),
+        actions: [h('button', { class: 'btn btn-text', onclick: () => m.close(null) }, 'Batal'), ok],
+        onClose: resolve,
+      });
+      who.id = 'sh-who';
+      ok.focus();
     });
-    if (!ok) return;
+  }
+
+  async share(items) {
+    const opts = await this.askShareOptions();
+    if (!opts) return;
     const t = toast('Menyiapkan…', { timeout: 0 });
     const label = t.firstChild;
     try {
@@ -834,6 +855,8 @@ export class DriveView {
         drive: this.drive,
         ids: items.map((i) => i.id),
         name: items.length === 1 ? items[0].name : `${items.length} item`,
+        readonly: opts.readonly,
+        allowed: opts.allowed,
         onStep: (x) => (label.textContent = x),
       });
       t.remove();
@@ -860,7 +883,7 @@ export class DriveView {
       body: h(
         'div',
         { class: 'modal-body' },
-        h('p', { class: 'modal-text' }, `“${share.name}” bisa dibuka siapa pun yang punya link ini dan akun Telegram. Cabut kapan saja di menu Dibagikan.`),
+        h('p', { class: 'modal-text' }, `“${share.name}” ${share.allowed?.length ? `hanya bisa dibuka akun: ${share.allowed.map((x) => (/^\d+$/.test(x) ? x : '@' + x)).join(', ')}` : 'bisa dibuka siapa pun yang punya link ini dan akun Telegram'}${share.readonly ? ', hanya untuk dilihat' : ''}. Cabut kapan saja di menu Dibagikan.`),
         input,
       ),
       actions: [h('button', { class: 'btn btn-text', onclick: () => m.close() }, 'Tutup'), h('button', { class: 'btn btn-primary', onclick: copy }, 'Salin link')],
@@ -875,7 +898,7 @@ export class DriveView {
         'div',
         { class: 'share-row' },
         h('span', { class: 'folder-ic' }, icon('link', 20)),
-        h('div', { class: 'share-info' }, h('span', { class: 'item-name', title: sh.name }, sh.name), h('span', { class: 'muted' }, `${sh.count} file · ${formatDate(sh.created)}`)),
+        h('div', { class: 'share-info' }, h('span', { class: 'item-name', title: sh.name }, sh.name), h('span', { class: 'muted' }, `${sh.count} file · ${formatDate(sh.created)}${sh.readonly ? ' · hanya lihat' : ''}${sh.allowed?.length ? ` · ${sh.allowed.length} akun` : ''}`)),
         h('button', { class: 'btn btn-outline', onclick: () => this.copyShare(sh) }, 'Salin link'),
         h('button', { class: 'btn btn-outline danger', onclick: () => this.revoke(sh) }, 'Cabut'),
       ),

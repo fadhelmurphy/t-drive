@@ -6,7 +6,7 @@ import { Reader } from '../src/core/reader.js';
 import { CIPHER_BLOCK, LAYOUT, PLAIN_BLOCK } from '../src/core/blocks.js';
 import { WrongPassphraseError, randomBytes, toB64 } from '../src/core/crypto.js';
 import { ROOT } from '../src/core/drive-index.js';
-import { copyToDrive, createShare, manifestChildren, openShare, parseShareHash, revokeShare, shareLink } from '../src/core/share.js';
+import { parseAllowed, copyToDrive, createShare, manifestChildren, openShare, parseShareHash, revokeShare, shareLink } from '../src/core/share.js';
 
 // Speed: tiny PBKDF2 isn't configurable via the store, so this suite takes a few seconds.
 const prev = LAYOUT.blocksPerPart;
@@ -379,5 +379,44 @@ describe('end to end with fake Telegram', () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(await tg.pinnedId()).toBe(store.indexMsgId);
     expect((await tg.listDocuments()).filter((d) => d.name === 't-drive-index.bin').length).toBe(1);
+  }, 60000);
+
+  it('share options: view-only flag travels in the manifest; allow-list admits only listed accounts', async () => {
+    const owner = new FakeTg();
+    const drive = new DriveStore(owner);
+    await drive.create('pw');
+    const bytes = new Uint8Array(1000).fill(3);
+    const up = new Uploader(owner, drive);
+    up.add([{ file: new File([bytes], 'a.bin'), parent: ROOT }]);
+    await waitIdle(up);
+    const file = drive.index.children(ROOT).find((i) => i.type === 'file');
+
+    expect(parseAllowed(' @Ani, t.me/Budi;12345 ani')).toEqual(['ani', 'budi', '12345']);
+
+    const share = await createShare({ tg: owner, drive, ids: [file.id], name: 'a', readonly: true, allowed: ['ani', '777'] });
+    expect(share.readonly).toBe(true);
+    const parsed = parseShareHash(new URL(shareLink(share, 'https://x/')).hash);
+
+    const stranger = new FakeTg({ messages: owner.messages, server: owner.server });
+    stranger.chanId = 'stranger-main';
+    stranger.user = { id: 5n, username: 'zed' };
+    await expect(openShare({ tg: stranger, ...parsed })).rejects.toThrow(/khusus akun/);
+
+    const byName = new FakeTg({ messages: owner.messages, server: owner.server });
+    byName.chanId = 'n-main';
+    byName.user = { id: 6n, username: 'Ani' };
+    const a = await openShare({ tg: byName, ...parsed });
+    expect(a.manifest.readonly).toBe(true);
+
+    const byId = new FakeTg({ messages: owner.messages, server: owner.server });
+    byId.chanId = 'i-main';
+    byId.user = { id: 777n, username: null };
+    await openShare({ tg: byId, ...parsed });
+
+    const open = await createShare({ tg: owner, drive, ids: [file.id], name: 'b' });
+    expect(open.readonly).toBeUndefined();
+    const p2 = parseShareHash(new URL(shareLink(open, 'https://x/')).hash);
+    const any = await openShare({ tg: stranger, ...p2 });
+    expect(any.manifest.readonly).toBeUndefined();
   }, 60000);
 });
