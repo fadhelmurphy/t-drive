@@ -527,4 +527,37 @@ describe('end to end with fake Telegram', () => {
     expect(out).toEqual(data);
     void origRetry;
   }, 120000);
+
+  it('a conversion that dies mid-way continues by itself after a reload', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const data = randomBytes(PLAIN_BLOCK * 3); // 3 blocks either way = one part
+    const mem = new Map();
+    const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+    const up = new Uploader(tg, store, { storage });
+    up.add([{ file: new File([data], 'x.bin', { lastModified: 9 }), parent: ROOT }]);
+    await waitIdle(up);
+    const item = store.index.children(ROOT)[0];
+
+    const origSave = tg.savePart.bind(tg);
+    tg.savePart = async (a) => {
+      if (a.part >= 4) throw new Error('DEAD');
+      return origSave(a);
+    };
+    up.convert([item], true, new Reader(tg)); // encrypted -> open
+    await waitIdle(up);
+    expect(up.tasks.at(-1).status).toBe('error');
+    await up.persisting;
+    await up.persist();
+
+    tg.savePart = origSave;
+    const up2 = new Uploader(tg, store, { storage });
+    await up2.restore({ reader: new Reader(tg) });
+    await waitIdle(up2);
+    const o = store.index.get(item.id);
+    expect(o.open).toBe(true);
+    expect(await new Reader(tg).readAll(o)).toEqual(data);
+    expect(mem.has('tdrive.pending')).toBe(false);
+  }, 60000);
 });

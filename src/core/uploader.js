@@ -39,7 +39,8 @@ export class Uploader extends EventTarget {
   }
 
   /** Unfinished uploads that survived a reload: wait for the user to pick the same file again. */
-  async restore() {
+  async restore({ reader } = {}) {
+    if (reader) this.reader = reader;
     let list = [];
     try {
       const raw = this.storage?.getItem(PENDING_KEY);
@@ -50,9 +51,19 @@ export class Uploader extends EventTarget {
     }
     for (const r of list) {
       if (this.tasks.some((t) => t.id === r.id)) continue;
+      const conv = r.replaceId ? this.drive.index.get(r.replaceId) : null;
+      if (r.replaceId) {
+        // a conversion reads its source from Telegram, so it needs no file picked again
+        const sourceOk = conv && conv.type === 'file' && conv.size === r.size && !!conv.open !== !!r.open && this.reader;
+        if (!sourceOk) {
+          // already converted (parts now belong to the item) -> keep them; otherwise they are leftovers
+          const adopted = conv && !!conv.open === !!r.open;
+          if (!adopted && r.sent?.length) this.tg.deleteMessages(r.sent).catch(() => {});
+          continue;
+        }
+      }
       const t = {
         id: r.id,
-        file: null,
         parent: this.drive.index.get(r.parent) ? r.parent : 'root',
         name: r.name,
         open: !!r.open,
@@ -64,8 +75,9 @@ export class Uploader extends EventTarget {
         sent: r.sent,
         cur: r.cur ? { p: r.cur.p, fileId: BigInt(r.cur.fileId), blocks: r.cur.blocks } : null,
         resumable: true,
+        file: conv ? new ReaderSource(this.reader, conv) : null,
         loaded: 0,
-        status: 'paused',
+        status: conv ? 'queued' : 'paused',
         note: '',
         error: null,
         ctrl: new AbortController(),
@@ -78,6 +90,7 @@ export class Uploader extends EventTarget {
     }
     this.persist();
     this.emit();
+    this.pump(); // conversions continue by themselves
   }
 
   /** Keep only the leading parts that still exist in the channel. */
@@ -188,7 +201,7 @@ export class Uploader extends EventTarget {
         replaceId,
         size: file.size,
         lastModified: file.lastModified,
-        resumable: !(file instanceof ReaderSource),
+        resumable: true,
         sent: [],
         loaded: 0,
         status: 'queued',
@@ -203,6 +216,7 @@ export class Uploader extends EventTarget {
 
   /** Re-upload existing files in the other mode (open <-> encrypted), streaming through `reader`. */
   convert(items, toOpen, reader) {
+    this.reader = reader;
     for (const item of items) {
       const file = new ReaderSource(reader, item);
       this.add([{ file, parent: item.parent }], { open: toOpen, replaceId: item.id });
