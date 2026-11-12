@@ -541,8 +541,31 @@ export class DriveView {
     el.dataset.id = it.id;
     el.setAttribute('aria-selected', String(s.selection.has(it.id)));
     if (s.selection.has(it.id)) el.classList.add('selected');
+    const toggle = () => {
+      s.selection.has(it.id) ? s.selection.delete(it.id) : s.selection.add(it.id);
+      s.anchor = it.id;
+      this.renderMain();
+      this.mainEl.querySelector(`[data-id="${it.id}"]`)?.focus();
+    };
+    // Google Drive-style checkbox: always toggles, never opens
+    const host = el.querySelector('.name-wrap, .card-head, .folder-tile');
+    if (host) {
+      const cb = h('button', { class: 'sel-check', type: 'button', role: 'checkbox', 'aria-checked': String(s.selection.has(it.id)), 'aria-label': `Pilih ${it.name}` }, icon('check', 14));
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggle();
+      });
+      cb.addEventListener('dblclick', (e) => e.stopPropagation());
+      host.prepend(cb);
+    }
     el.addEventListener('click', (e) => {
-      if (e.pointerType === 'touch' && !s.selection.size) return this.open(it);
+      if (s.longPressed) return void (s.longPressed = false); // the tap that ended a long-press
+      const touch = e.pointerType === 'touch' || Date.now() - (s.lastTouch || 0) < 700;
+      if (touch) {
+        if (s.selection.size) toggle();
+        else this.open(it);
+        return;
+      }
       if (e.metaKey || e.ctrlKey) {
         s.selection.has(it.id) ? s.selection.delete(it.id) : s.selection.add(it.id);
         s.anchor = it.id;
@@ -550,8 +573,6 @@ export class DriveView {
         const ids = this.visible.map((x) => x.id);
         const [a, b] = [ids.indexOf(s.anchor), ids.indexOf(it.id)].sort((x, y) => x - y);
         s.selection = new Set(ids.slice(a, b + 1));
-      } else if (e.pointerType === 'touch') {
-        s.selection.has(it.id) ? s.selection.delete(it.id) : s.selection.add(it.id);
       } else {
         s.selection = new Set([it.id]);
         s.anchor = it.id;
@@ -580,12 +601,18 @@ export class DriveView {
     // long-press on touch selects
     let pressTimer;
     el.addEventListener('touchstart', () => {
+      s.lastTouch = Date.now();
       pressTimer = setTimeout(() => {
+        s.longPressed = true;
         s.selection.add(it.id);
+        s.anchor = it.id;
         this.renderMain();
       }, 500);
     }, { passive: true });
-    el.addEventListener('touchend', () => clearTimeout(pressTimer));
+    el.addEventListener('touchend', () => {
+      s.lastTouch = Date.now();
+      clearTimeout(pressTimer);
+    });
     el.addEventListener('touchmove', () => clearTimeout(pressTimer), { passive: true });
 
     if (s.section !== 'trash') {
