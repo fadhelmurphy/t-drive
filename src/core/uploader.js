@@ -44,8 +44,9 @@ export class Uploader extends EventTarget {
     try {
       const raw = this.storage?.getItem(PENDING_KEY);
       if (raw) list = (await unseal(this.drive.key, fromB64(raw))) || [];
-    } catch {
-      return; // other account/passphrase, or damaged: ignore
+    } catch (e) {
+      console.warn('Catatan unggahan tertunda tidak bisa dibaca (akun/passphrase lain, atau rusak)', e);
+      return;
     }
     for (const r of list) {
       if (this.tasks.some((t) => t.id === r.id)) continue;

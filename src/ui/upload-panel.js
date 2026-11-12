@@ -11,6 +11,8 @@ export class UploadPanel {
     uploader.addEventListener('change', () => {
       if (!this.frame) this.frame = requestAnimationFrame(() => ((this.frame = 0), this.render()));
     });
+    // restored (paused) uploads may already be in the queue before this panel existed
+    this.render();
   }
 
   /** Ask for the file again (browsers cannot reopen a local file by themselves). */
