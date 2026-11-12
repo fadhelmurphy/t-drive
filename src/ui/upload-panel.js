@@ -110,6 +110,6 @@ export class UploadPanel {
             );
           }),
         );
-    this.el.replaceChildren(head, list);
+    this.el.replaceChildren(...[head, list].filter(Boolean));
   }
 }
