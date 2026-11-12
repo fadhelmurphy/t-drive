@@ -313,6 +313,7 @@ export async function start() {
 
   const reader = new Reader(ctx.tg);
   const uploader = new Uploader(ctx.tg, ctx.drive);
+  uploader.restore().catch((e) => console.warn('Unggahan tertunda tidak bisa dipulihkan', e));
   installStreamBridge((id) => ctx.drive.index.get(id), reader);
   const streamOk = await streaming;
 

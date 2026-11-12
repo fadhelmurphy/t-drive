@@ -1,6 +1,6 @@
 import { h, icon, badge } from './dom.js';
 import { formatBytes } from '../core/util.js';
-import { confirmDialog } from './dialogs.js';
+import { confirmDialog, toast } from './dialogs.js';
 
 export class UploadPanel {
   constructor(uploader) {
@@ -13,6 +13,23 @@ export class UploadPanel {
     });
   }
 
+  /** Ask for the file again (browsers cannot reopen a local file by themselves). */
+  pick(t) {
+    const input = h('input', { type: 'file', hidden: true });
+    input.addEventListener('change', () => {
+      const f = input.files?.[0];
+      input.remove();
+      if (!f) return;
+      try {
+        this.uploader.resume(t.id, f);
+      } catch (e) {
+        toast(e.message, { error: true });
+      }
+    });
+    document.body.append(input);
+    input.click();
+  }
+
   render() {
     const tasks = this.uploader.tasks;
     if (!tasks.length) {
@@ -22,9 +39,12 @@ export class UploadPanel {
     this.el.hidden = false;
     const active = tasks.filter((t) => t.status === 'queued' || t.status === 'uploading').length;
     const failed = tasks.filter((t) => t.status === 'error').length;
+    const paused = tasks.filter((t) => t.status === 'paused').length;
     const title = active
       ? `Mengunggah ${active} item`
-      : failed
+      : paused
+        ? `${paused} unggahan terhenti`
+        : failed
         ? `${failed} unggahan gagal`
         : `${tasks.filter((t) => t.status === 'done').length} unggahan selesai`;
 
@@ -80,6 +100,8 @@ export class UploadPanel {
                 ? 'Selesai'
                 : t.status === 'error'
                   ? `Gagal: ${t.error}`
+                  : t.status === 'paused'
+                    ? `Terhenti di ${pct}%. Pilih file yang sama untuk melanjutkan`
                   : t.status === 'canceled'
                     ? 'Dibatalkan'
                     : t.status === 'queued'
@@ -88,6 +110,13 @@ export class UploadPanel {
             let action = null;
             if (t.status === 'queued' || t.status === 'uploading') {
               action = h('button', { class: 'icon-btn', 'aria-label': `Batalkan ${t.name}`, onclick: () => this.uploader.cancel(t.id) }, icon('close', 16));
+            } else if (t.status === 'paused') {
+              action = h(
+                'span',
+                { class: 'up-actions' },
+                h('button', { class: 'btn btn-text', onclick: () => this.pick(t) }, 'Lanjutkan'),
+                h('button', { class: 'icon-btn', 'aria-label': `Buang ${t.name}`, onclick: () => this.uploader.discard(t.id) }, icon('close', 16)),
+              );
             } else if (t.status === 'error' || t.status === 'canceled') {
               action = h('button', { class: 'icon-btn', 'aria-label': `Ulangi ${t.name}`, onclick: () => this.uploader.retry(t.id) }, icon('retry', 16));
             } else {
@@ -96,7 +125,7 @@ export class UploadPanel {
             return h(
               'li',
               { class: `up-row up-${t.status}` },
-              badge({ type: 'file', name: t.name, mime: t.file.type }),
+              badge({ type: 'file', name: t.name, mime: t.file?.type }),
               h(
                 'div',
                 { class: 'up-info' },

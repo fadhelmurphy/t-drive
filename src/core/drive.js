@@ -287,6 +287,7 @@ export class DriveStore extends EventTarget {
   referencedMessageIds() {
     const ids = new Set(this.indexMsgId ? [this.indexMsgId] : []);
     for (const it of Object.values(this.index.items)) for (const p of it.parts || []) ids.add(p);
+    for (const id of this.extraKnown?.() || []) ids.add(id); // parts of unfinished uploads
     return ids;
   }
 

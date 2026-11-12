@@ -419,4 +419,60 @@ describe('end to end with fake Telegram', () => {
     const any = await openShare({ tg: stranger, ...p2 });
     expect(any.manifest.readonly).toBeUndefined();
   }, 60000);
+
+  it('upload resumes after a failure and after a reload, reusing finished parts', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const data = randomBytes(PLAIN_BLOCK * 5 + 123);
+    const file = new File([data], 'big.bin', { lastModified: 1234 });
+    const mem = new Map();
+    const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+
+    // two parts; the second fails
+    const saved = LAYOUT.blocksPerPart;
+    LAYOUT.blocksPerPart = 3;
+    try {
+      // part 2 fails: part 1 is kept
+      let calls = 0;
+      const orig = tg.sendDocument.bind(tg);
+      tg.sendDocument = async (a) => {
+        if (++calls === 2) throw new Error('BOOM');
+        return orig(a);
+      };
+      const up2 = new Uploader(tg, store, { storage });
+      up2.add([{ file, parent: ROOT }]);
+      await waitIdle(up2);
+      const t = up2.tasks[0];
+      expect(t.status).toBe('error');
+      expect(t.sent.length).toBe(1);
+      expect(t.loaded).toBeGreaterThan(0);
+      expect(store.referencedMessageIds().has(t.sent[0])).toBe(true); // protected from the orphan cleaner
+
+      // "reload": a new uploader restores it as paused
+      const up3 = new Uploader(tg, store, { storage });
+      await up3.restore();
+      expect(up3.tasks.length).toBe(1);
+      expect(up3.tasks[0].status).toBe('paused');
+      expect(up3.tasks[0].sent.length).toBe(1);
+      expect(() => up3.resume(up3.tasks[0].id, new File([data], 'big.bin', { lastModified: 999 }))).toThrow(/berbeda/);
+
+      tg.sendDocument = orig;
+      up3.add([{ file, parent: ROOT }]); // picking the same file again continues it
+      await waitIdle(up3);
+      expect(up3.tasks[0].status).toBe('done');
+      const f = store.index.children(ROOT).find((i) => i.name === 'big.bin');
+      expect(f.parts.length).toBe(2);
+      expect(f.parts[0]).toBe(t.sent[0]); // first part was reused, not re-sent
+      const back = [];
+      for await (const c of new Reader(tg).range(f, 0, f.size - 1)) back.push(c);
+      const all = new Uint8Array(f.size);
+      let o = 0;
+      for (const c of back) (all.set(c, o), (o += c.length));
+      expect(all).toEqual(data);
+      expect(mem.has('tdrive.pending')).toBe(false);
+    } finally {
+      LAYOUT.blocksPerPart = saved;
+    }
+  }, 60000);
 });
