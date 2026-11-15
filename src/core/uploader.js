@@ -51,8 +51,8 @@ export class Uploader extends EventTarget {
     }
     for (const r of list) {
       if (this.tasks.some((t) => t.id === r.id)) continue;
-      const conv = r.replaceId ? this.drive.index.get(r.replaceId) : null;
-      if (r.replaceId) {
+      const conv = r.conv && r.replaceId ? this.drive.index.get(r.replaceId) : null;
+      if (r.conv && r.replaceId) {
         // a conversion reads its source from Telegram, so it needs no file picked again
         const sourceOk = conv && conv.type === 'file' && conv.size === r.size && !!conv.open !== !!r.open && this.reader;
         if (!sourceOk) {
@@ -129,6 +129,7 @@ export class Uploader extends EventTarget {
       parent: t.parent,
       open: !!t.open,
       replaceId: t.replaceId || null,
+      conv: t.file instanceof ReaderSource,
       key: t.rawKey ? toB64(t.rawKey) : null,
       nonce: t.nonce ? toB64(t.nonce) : null,
       sent: t.sent,
@@ -303,7 +304,8 @@ export class Uploader extends EventTarget {
 
       if (t.replaceId) {
         const fields = open ? { open: true } : { key: toB64(t.rawKey), nonce: toB64(t.nonce) };
-        const old = this.drive.mutate((ix) => ix.replaceStorage(t.replaceId, { ...fields, parts: sent }));
+        const meta = t.file instanceof ReaderSource ? null : { size, mime: t.file.type || guessMime(t.name), modified: t.file.lastModified || Date.now() };
+        const old = this.drive.mutate((ix) => ix.replaceStorage(t.replaceId, { ...fields, parts: sent, meta }));
         this.tg.deleteMessages(old).catch(() => {});
       } else
         this.drive.mutate((ix) =>

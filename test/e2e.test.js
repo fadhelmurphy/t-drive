@@ -563,4 +563,61 @@ describe('end to end with fake Telegram', () => {
     expect(await new Reader(tg).readAll(o)).toEqual(data);
     expect(mem.has('tdrive.pending')).toBe(false);
   }, 60000);
+
+  it('device backup: mirrors a folder, skips unchanged, replaces changed, ignores hidden files', async () => {
+    const { BackupManager, BACKUP_FOLDER } = await import('../src/core/backup.js');
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const up = new Uploader(tg, store);
+    const mkFile = (name, content, lm) => ({ kind: 'file', name, getFile: async () => new File([content], name, { lastModified: lm }) });
+    const mkDir = (name, kids) => ({ kind: 'directory', name, async *values() { yield* kids; }, queryPermission: async () => 'granted' });
+    let photoV = 'AAAA';
+    const root = () =>
+      mkDir('Foto HP', [
+        mkFile('a.txt', 'halo', 1000),
+        mkFile('.hidden', 'x', 1000),
+        mkFile('Thumbs.db', 'x', 1000),
+        mkDir('Liburan', [mkFile('p.jpg', photoV, photoV === 'AAAA' ? 2000 : 3000)]),
+      ]);
+    let current = root();
+    const mem = new Map();
+    const backup = new BackupManager({
+      drive: store,
+      uploader: up,
+      storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) },
+      store: { get: async () => current, set: async () => {}, del: async () => {} },
+      picker: async () => current,
+    });
+    let r = await backup.enable();
+    expect(r.queued).toBe(2);
+    await waitIdle(up);
+    const top = store.index.children(ROOT).find((i) => i.name === BACKUP_FOLDER);
+    const dev = store.index.children(top.id).find((i) => i.name === 'Foto HP');
+    expect(store.index.children(dev.id).map((i) => i.name).sort()).toEqual(['Liburan', 'a.txt']);
+    const lib = store.index.children(dev.id).find((i) => i.name === 'Liburan');
+    const photo = store.index.children(lib.id)[0];
+    expect(photo.name).toBe('p.jpg');
+
+    r = await backup.scan(); // nothing changed
+    expect(r).toMatchObject({ queued: 0, skipped: 2 });
+
+    photoV = 'BBBBBB'; // edited on the device
+    current = root();
+    backup.handle = current;
+    r = await backup.scan();
+    expect(r).toMatchObject({ queued: 1, changed: 1 });
+    await waitIdle(up);
+    expect(store.index.children(lib.id).length).toBe(1);
+    const updated = store.index.get(photo.id);
+    expect(updated.size).toBe(6);
+    expect(new TextDecoder().decode(await new Reader(tg).readAll(updated))).toBe('BBBBBB');
+
+    const again = backup.backupFiles([new File(['halo'], 'a.txt', { lastModified: 1000 }), new File(['baru'], 'b.txt', { lastModified: 5 })], 'Foto HP');
+    expect(again).toMatchObject({ queued: 1, skipped: 1 });
+    await waitIdle(up);
+    expect(mem.has('tdrive.backup')).toBe(true);
+    await backup.disable();
+    expect(backup.cfg.enabled).toBe(false);
+  }, 60000);
 });

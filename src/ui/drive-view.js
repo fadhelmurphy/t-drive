@@ -10,6 +10,8 @@ import { streamUrl } from '../core/stream.js';
 import { parseAllowed, createShare, revokeShare, shareLink } from '../core/share.js';
 import { formatBytes, formatDate } from '../core/util.js';
 
+import { BackupManager, supportsFolderWatch } from '../core/backup.js';
+
 const SECTIONS = [
   { id: 'drive', label: 'Drive Saya', icon: 'drive' },
   { id: 'recent', label: 'Terbaru', icon: 'clock' },
@@ -97,6 +99,9 @@ export class DriveView {
     this.uploader.addEventListener('change', () => {
       if (!this.statsFrame) this.statsFrame = requestAnimationFrame(() => ((this.statsFrame = 0), this.renderNav()));
     });
+    this.backup = new BackupManager({ drive: this.drive, uploader: this.uploader });
+    this.backup.addEventListener('queued', (e) => toast(`Backup: ${e.detail.queued} file baru/berubah diunggah.`));
+    this.backup.init().catch((e) => console.warn('Backup tidak bisa dilanjutkan', e));
     this.bindDrop();
     this.bindKeys();
     window.addEventListener('focus', () => this.checkStale());
@@ -112,6 +117,92 @@ export class DriveView {
     // Files sent into the storage channel from Telegram itself appear here automatically.
     this.autoImport();
     this.importTimer = setInterval(() => document.visibilityState === 'visible' && this.autoImport(), 45000);
+  }
+
+  /** Dialog to switch the device backup on/off and run it by hand. */
+  showBackup() {
+    const b = this.backup;
+    const body = h('div', { class: 'modal-body backup-box' });
+    let m;
+    const when = (t) => (t ? new Date(t).toLocaleString('id') : 'belum pernah');
+    const statusText = () => {
+      const st = b.status;
+      if (st.state === 'scanning') return 'Memeriksa folder…';
+      if (st.state === 'needs-permission') return 'Browser meminta izin akses folder lagi setiap halaman dibuka. Tekan “Izinkan akses”.';
+      if (st.state === 'error') return 'Gagal: ' + st.error;
+      if (st.state === 'idle') return `Terakhir ${when(b.cfg.last)}: ${st.found} file diperiksa, ${st.queued} diunggah, ${st.skipped} sudah ada.`;
+      return b.cfg.enabled ? 'Menunggu pemeriksaan pertama…' : 'Nonaktif.';
+    };
+    const openCheck = () => {
+      const c = h('input', { type: 'checkbox', checked: !!b.cfg.open, onchange: (e) => b.setOptions({ open: e.target.checked }) });
+      return h('label', { class: 'field-check' }, c, h('span', null, ' Simpan terbuka (terlihat di Telegram, tidak terenkripsi)'));
+    };
+    const run = async (fn) => {
+      try {
+        await fn();
+      } catch (e) {
+        if (e?.name !== 'AbortError') toast('Backup: ' + errorText(e), { error: true });
+      }
+      render();
+    };
+    const render = () => {
+      const c = b.cfg;
+      const folderId = b.backupFolderId();
+      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke folder “Backup Perangkat” di drive. Searah: backup tidak pernah menghapus file di drive.')];
+      if (supportsFolderWatch()) {
+        const toggle = h('input', { type: 'checkbox', checked: c.enabled, onchange: (e) => run(() => (e.target.checked ? b.enable() : b.disable())) });
+        rows.push(h('label', { class: 'field-check' }, toggle, h('span', null, ' Backup otomatis')));
+        if (c.enabled) {
+          const every = h(
+            'select',
+            { class: 'input', 'aria-label': 'Periksa setiap', onchange: (e) => b.setOptions({ intervalMin: +e.target.value }) },
+            [5, 15, 60].map((n) => h('option', { value: n, selected: c.intervalMin === n }, `Periksa tiap ${n} menit`)),
+          );
+          rows.push(
+            h('p', { class: 'muted' }, `Folder: ${c.name}`),
+            every,
+            openCheck(),
+            h('p', { class: 'backup-status' }, statusText()),
+            h(
+              'div',
+              { class: 'backup-actions' },
+              b.status.state === 'needs-permission'
+                ? h('button', { class: 'btn btn-primary', onclick: () => run(() => b.resume({ ask: true })) }, 'Izinkan akses')
+                : h('button', { class: 'btn btn-outline', onclick: () => run(() => b.scan()) }, 'Cadangkan sekarang'),
+              h('button', { class: 'btn btn-text', onclick: () => run(() => b.enable()) }, 'Ganti folder'),
+            ),
+            h('p', { class: 'muted share-hint' }, 'Berjalan selama T-Drive terbuka di tab ini. Kalau kamu menghapus file di drive tapi masih ada di perangkat, file itu diunggah lagi.'),
+          );
+        }
+      } else {
+        const input = h('input', {
+          type: 'file',
+          multiple: true,
+          hidden: true,
+          onchange: (e) => {
+            const r = b.backupFiles(e.target.files);
+            e.target.value = '';
+            toast(`Backup: ${r.queued} diunggah, ${r.skipped} sudah ada.`);
+            render();
+          },
+        });
+        rows.push(
+          h('p', { class: 'muted' }, 'Browser ini tidak bisa memantau folder otomatis (butuh Chrome atau Edge di komputer). Kamu tetap bisa mencadangkan foto dan file secara manual; yang sudah pernah dicadangkan tidak diunggah dua kali.'),
+          openCheck(),
+          h('div', { class: 'backup-actions' }, h('button', { class: 'btn btn-primary', onclick: () => input.click() }, 'Pilih file untuk dicadangkan'), input),
+        );
+      }
+      if (folderId) rows.push(h('button', { class: 'btn btn-text', onclick: () => (m.close(), this.go('drive', folderId)) }, 'Buka folder backup'));
+      body.replaceChildren(...rows);
+    };
+    b.addEventListener('change', render);
+    m = customDialog({
+      title: 'Backup perangkat',
+      body,
+      actions: [h('button', { class: 'btn btn-primary', onclick: () => m.close() }, 'Selesai')],
+      onClose: () => b.removeEventListener('change', render),
+    });
+    render();
   }
 
   async autoImport(manual = false) {
@@ -144,6 +235,7 @@ export class DriveView {
         { label: this.me.phone ? '+' + this.me.phone : this.me.username ? '@' + this.me.username : '', header: true, muted: true },
         { label: 'Muat ulang drive', icon: 'refresh', run: () => this.reloadDrive() },
         { label: 'Impor file dari Telegram', icon: 'download', run: () => this.autoImport(true) },
+        { label: 'Backup perangkat…', icon: 'upload', run: () => this.showBackup() },
         { label: 'Bersihkan sisa di Telegram', icon: 'trash', run: () => this.cleanOrphans() },
         { label: 'Ubah passphrase', icon: 'edit', run: () => this.changePassphrase() },
         { label: 'Kunci', icon: 'lock', run: () => this.guardActive(this.onLock) },
@@ -301,6 +393,7 @@ export class DriveView {
           if (s.id === 'drive') this.makeDropTarget(btn, ROOT);
           return h('li', null, btn);
         }),
+        h('li', null, h('button', { class: `nav-item${this.backup.cfg.enabled ? ' backup-on' : ''}`, onclick: () => this.showBackup() }, icon('upload', 20), 'Backup perangkat', this.backup.cfg.enabled ? h('span', { class: 'nav-dot', title: 'Aktif' }) : null)),
       ),
       h(
         'div',

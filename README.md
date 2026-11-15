@@ -84,3 +84,13 @@ MIT
 ## Unggahan yang bisa dilanjutkan
 
 Bagian file yang sudah terkirim (per ±2 GB) dipertahankan kalau unggahan gagal, jadi **Ulangi** hanya mengirim sisanya. Kalau halaman ditutup atau di-reload di tengah jalan, progresnya tersimpan terenkripsi di browser dan muncul sebagai "unggahan terhenti"; pilih file yang sama lagi (lewat **Lanjutkan** atau Upload biasa) dan T-Drive melanjutkan dari bagian yang tersisa. Nama, ukuran, dan tanggal ubah file harus sama. Konversi terbuka/tertutup yang terputus melanjutkan sendiri setelah reload (sumbernya sudah ada di Telegram, tidak perlu memilih file). Untuk file yang masih satu bagian, T-Drive mencoba memakai ulang potongan yang sudah ada di Telegram (blok yang selesai dicatat); kalau Telegram sudah membuangnya, bagian itu diulang dari awal.
+
+## Backup perangkat
+
+Menu **Backup perangkat** (sidebar atau menu akun) menyalin isi satu folder di perangkat ke folder "Backup Perangkat" di drive, dengan struktur subfolder yang sama. Bisa dinyalakan dan dimatikan kapan saja.
+
+- **Desktop (Chrome/Edge):** pilih folder sekali; folder itu diperiksa tiap 5/15/60 menit selama T-Drive terbuka. Hanya file baru atau yang berubah (ukuran/tanggal ubah) yang diunggah; file tersembunyi dan sementara dilewati. Setelah halaman dibuka ulang, browser meminta izin akses folder lagi (tombol "Izinkan akses").
+- **HP/Safari/Firefox:** browser tidak mengizinkan pemantauan folder, jadi tersedia mode manual: pilih foto/file, dan yang sudah pernah dicadangkan dilewati.
+- Searah: backup tidak pernah menghapus file di drive. File yang kamu hapus di drive tapi masih ada di perangkat akan diunggah lagi.
+- Opsi "Simpan terbuka" menyimpan file tanpa enkripsi supaya terlihat di Telegram.
+

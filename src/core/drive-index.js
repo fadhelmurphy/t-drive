@@ -196,7 +196,7 @@ export class DriveIndex {
   }
 
   /** Swap a file's storage (encrypted <-> open) after it was re-uploaded. Returns the old part ids. */
-  replaceStorage(id, { open = false, key, nonce, parts }) {
+  replaceStorage(id, { open = false, key, nonce, parts, meta = null }) {
     const it = this.get(id);
     if (!it || it.type !== 'file') throw new Error('Item tidak ditemukan');
     const old = it.parts;
@@ -207,6 +207,7 @@ export class DriveIndex {
     if (open) it.open = true;
     else Object.assign(it, { key, nonce });
     it.parts = parts;
+    if (meta) Object.assign(it, meta); // a backed-up file changed on the device: new size/mime/modified
     return old;
   }
 
