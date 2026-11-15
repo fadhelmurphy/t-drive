@@ -90,12 +90,17 @@ export class UploadPanel {
       ),
     );
 
+    // thousands of queued files (e.g. a backup) must not become thousands of DOM rows
+    const rank = { uploading: 0, error: 1, paused: 2, queued: 3, canceled: 4, done: 5 };
+    const MAX_ROWS = 40;
+    const shown = tasks.length > MAX_ROWS ? [...tasks].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9)).slice(0, MAX_ROWS) : tasks;
+    const more = tasks.length > shown.length ? h('li', { class: 'up-more' }, `dan ${tasks.length - shown.length} lainnya…`) : null;
     const list = this.collapsed
       ? null
       : h(
           'ul',
           { class: 'up-list' },
-          tasks.map((t) => {
+          shown.map((t) => {
             const pct = t.size ? Math.min(100, Math.floor((t.loaded / t.size) * 100)) : t.status === 'done' ? 100 : 0;
             const status =
               t.status === 'done'
@@ -135,11 +140,12 @@ export class UploadPanel {
                 t.status === 'uploading'
                   ? h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { class: 'progress-bar', style: { width: pct + '%' } }))
                   : null,
-                h('span', { class: 'up-status' }, t.replaceId ? `${t.open ? 'Ke terbuka' : 'Ke tertutup'} · ${status}` : t.open ? `Terbuka · ${status}` : status),
+                h('span', { class: 'up-status' }, t.convert ? `${t.open ? 'Ke terbuka' : 'Ke tertutup'} · ${status}` : t.open ? `Terbuka · ${status}` : status),
               ),
               action,
             );
           }),
+          more,
         );
     this.el.replaceChildren(...[head, list].filter(Boolean));
   }

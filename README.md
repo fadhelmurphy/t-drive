@@ -87,7 +87,7 @@ Bagian file yang sudah terkirim (per ±2 GB) dipertahankan kalau unggahan gagal,
 
 ## Backup perangkat
 
-Menu **Backup perangkat** (sidebar atau menu akun) menyalin isi satu folder di perangkat ke folder "Backup Perangkat" di drive, dengan struktur subfolder yang sama. Bisa dinyalakan dan dimatikan kapan saja.
+Menu **Backup perangkat** (sidebar atau menu akun) menyalin isi satu folder di perangkat ke drive dengan susunan **Backup Dari Perangkat › nama perangkat › nama folder › isi folder**. Nama perangkat bisa kamu isi sendiri (browser tidak bisa membaca nama komputer; defaultnya "PC Windows", "Mac", dst.). Folder `node_modules` dan folder/file tersembunyi dilewati. Bisa dinyalakan dan dimatikan kapan saja.
 
 - **Desktop (Chrome/Edge):** pilih folder sekali; folder itu diperiksa tiap 5/15/60 menit selama T-Drive terbuka. Hanya file baru atau yang berubah (ukuran/tanggal ubah) yang diunggah; file tersembunyi dan sementara dilewati. Setelah halaman dibuka ulang, browser meminta izin akses folder lagi (tombol "Izinkan akses").
 - **HP/Safari/Firefox:** browser tidak mengizinkan pemantauan folder, jadi tersedia mode manual: pilih foto/file, dan yang sudah pernah dicadangkan dilewati.

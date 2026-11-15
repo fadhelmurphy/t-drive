@@ -4,10 +4,33 @@
 // uses the same de-duplication.
 import { ROOT } from './drive-index.js';
 
-export const BACKUP_FOLDER = 'Backup Perangkat';
+export const BACKUP_FOLDER = 'Backup Dari Perangkat';
 const LS_KEY = 'tdrive.backup';
 const SKIP = /^(\.|thumbs\.db$|desktop\.ini$|~\$)/i;
 const SKIP_EXT = /\.(tmp|crdownload|part|download)$/i;
+const SKIP_DIRS = /^(node_modules|__pycache__|\$recycle\.bin|system volume information)$/i;
+const tick = () => new Promise((r) => setTimeout(r));
+
+/** A readable default for "which device is this" (browsers cannot tell the real computer name). */
+export function guessDeviceName() {
+  const ua = globalThis.navigator?.userAgent || '';
+  if (/iPhone|iPad/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'PC Windows';
+  if (/Macintosh|Mac OS/.test(ua)) return 'Mac';
+  if (/Linux/.test(ua)) return 'PC Linux';
+  return 'Perangkat';
+}
+
+/** Run fn over items with at most n in flight. */
+async function pool(items, n, fn) {
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (i < items.length) await fn(items[i++]);
+    }),
+  );
+}
 
 export const supportsFolderWatch = () => typeof globalThis.showDirectoryPicker === 'function' && !!globalThis.indexedDB;
 
@@ -35,12 +58,19 @@ const handleStore = {
   del: () => kv('readwrite', (s) => s.delete('dir')),
 };
 
-/** Recursively list files: [{ path: 'a/b/c.jpg', file }] (hidden/temporary files skipped). */
-export async function walk(dir, prefix = '', out = []) {
+/** Recursively list files: [{ path: 'a/b/c.jpg', handle }] (hidden, temporary and dependency folders skipped). */
+export async function walk(dir, prefix = '', out = [], onCount = () => {}) {
   for await (const h of dir.values()) {
     if (SKIP.test(h.name) || SKIP_EXT.test(h.name)) continue;
-    if (h.kind === 'directory') await walk(h, prefix + h.name + '/', out);
-    else if (h.kind === 'file') out.push({ path: prefix + h.name, handle: h });
+    if (h.kind === 'directory') {
+      if (!SKIP_DIRS.test(h.name)) await walk(h, prefix + h.name + '/', out, onCount);
+    } else if (h.kind === 'file') {
+      out.push({ path: prefix + h.name, handle: h });
+      if (out.length % 200 === 0) {
+        onCount(out.length);
+        await tick(); // keep the page responsive on huge folders
+      }
+    }
   }
   return out;
 }
@@ -59,7 +89,8 @@ export class BackupManager extends EventTarget {
     this.storage = storage;
     this.store = store || (globalThis.indexedDB ? handleStore : null);
     this.picker = picker || (() => globalThis.showDirectoryPicker({ id: 'tdrive-backup', mode: 'read' }));
-    this.cfg = { enabled: false, name: '', open: false, intervalMin: 15, last: 0, ...this.load() };
+    this.cfg = { enabled: false, name: '', device: '', open: false, intervalMin: 15, last: 0, ...this.load() };
+    if (!this.cfg.device) this.cfg.device = guessDeviceName();
     this.handle = null;
     this.status = { state: 'off', found: 0, queued: 0, skipped: 0, error: '' };
     this.timer = null;
@@ -156,8 +187,9 @@ export class BackupManager extends EventTarget {
     this.set('off');
   }
 
-  setOptions({ open, intervalMin }) {
+  setOptions({ open, intervalMin, device }) {
     if (open !== undefined) this.cfg.open = !!open;
+    if (device !== undefined) this.cfg.device = String(device).trim().replace(/[\\/]+/g, '-') || guessDeviceName();
     if (intervalMin) {
       this.cfg.intervalMin = intervalMin;
       if (this.cfg.enabled && this.timer) this.startTimer();
@@ -165,11 +197,15 @@ export class BackupManager extends EventTarget {
     this.save();
   }
 
-  /** The drive folder holding this device folder's copy (undefined until the first upload). */
-  backupFolderId(name = this.cfg.name) {
+  /** The drive folder holding the copy of the watched folder (undefined until the first upload). */
+  backupFolderId() {
     const ix = this.drive.index;
-    const top = ix.children(ROOT).find((i) => i.type === 'folder' && i.name === BACKUP_FOLDER);
-    return top && ix.children(top.id).find((i) => i.type === 'folder' && i.name === name)?.id;
+    let cur = ROOT;
+    for (const n of [BACKUP_FOLDER, this.cfg.device, this.cfg.name]) {
+      cur = ix.children(cur).find((i) => i.type === 'folder' && i.name === n)?.id;
+      if (!cur) return undefined;
+    }
+    return cur;
   }
 
   /** Scan the watched folder and queue what is new or changed. */
@@ -177,16 +213,21 @@ export class BackupManager extends EventTarget {
     if (this.scanning || !this.handle) return;
     if (this.uploader.active) return void (this.pending = true);
     this.scanning = true;
-    this.set('scanning');
+    this.set('scanning', { stage: 'Membaca folder', found: 0 });
     try {
-      const found = await walk(this.handle);
+      const found = await walk(this.handle, '', [], (n) => this.set('scanning', { stage: 'Membaca folder', found: n }));
+      this.set('scanning', { stage: 'Membaca info file', found: found.length });
       const entries = [];
-      for (const f of found) {
+      let n = 0;
+      await pool(found, 16, async (f) => {
         try {
           entries.push({ path: f.path, file: await f.handle.getFile() });
         } catch {} // vanished or locked while scanning
-      }
-      const r = this.queue(entries, this.cfg.name);
+        if (++n % 200 === 0) this.set('scanning', { stage: 'Membaca info file', found: found.length, done: n });
+      });
+      this.set('scanning', { stage: 'Membandingkan dengan drive', found: entries.length });
+      await tick();
+      const r = this.queue(entries, [this.cfg.device, this.cfg.name]);
       this.cfg.last = Date.now();
       this.save();
       this.set('idle', { found: entries.length, queued: r.queued, skipped: r.skipped });
@@ -203,25 +244,39 @@ export class BackupManager extends EventTarget {
   /** Manual mode: back up files the user picked (works on any browser, e.g. photos on a phone). */
   backupFiles(files, name = 'Unggahan manual') {
     const entries = [...files].map((file) => ({ path: file.webkitRelativePath || file.name, file }));
-    return this.queue(entries, name);
+    return this.queue(entries, [this.cfg.device, name]);
   }
 
-  /** De-duplicate against the drive (same path, size and modified time) and enqueue uploads. */
-  queue(entries, deviceName) {
+  /**
+   * De-duplicate against the drive (same path, size and modified time) and enqueue uploads.
+   * `roots` is the chain below "Backup Dari Perangkat", e.g. [device name, folder name].
+   */
+  queue(entries, roots) {
     const ix = this.drive.index;
     const open = !!this.cfg.open;
     const busy = new Set(
       this.uploader.tasks.filter((t) => !['done', 'canceled'].includes(t.status)).map((t) => `${t.name}|${t.size}|${t.lastModified || 0}`),
     );
-    const find = (parent, name) => ix.children(parent).find((i) => i.type === 'file' && i.name === name);
-    // existing folder for a path, or null (nothing is created while only checking)
+    // one pass over the index; looking children up per file would be quadratic on big folders
+    const byParent = new Map();
+    for (const it of Object.values(ix.items)) {
+      if (it.trashed) continue;
+      let m = byParent.get(it.parent);
+      if (!m) byParent.set(it.parent, (m = new Map()));
+      m.set(it.type === 'folder' ? 'd:' + it.name.toLocaleLowerCase() : 'f:' + it.name, it);
+    }
+    const sub = (parent, name) => byParent.get(parent)?.get('d:' + name.toLocaleLowerCase())?.id;
+    const folderCache = new Map();
     const folderOf = (dirs) => {
+      const key = dirs.join('/');
+      if (folderCache.has(key)) return folderCache.get(key);
       let cur = ROOT;
-      for (const d of [BACKUP_FOLDER, deviceName, ...dirs]) {
-        cur = ix.children(cur).find((i) => i.type === 'folder' && i.name.toLocaleLowerCase() === d.toLocaleLowerCase())?.id;
-        if (!cur) return null;
+      for (const d of [BACKUP_FOLDER, ...roots, ...dirs]) {
+        cur = cur && sub(cur, d);
+        if (!cur) break;
       }
-      return cur;
+      folderCache.set(key, cur || null);
+      return cur || null;
     };
 
     const fresh = [];
@@ -234,22 +289,29 @@ export class BackupManager extends EventTarget {
       }
       const dirs = path.split('/').slice(0, -1).filter(Boolean);
       const folder = folderOf(dirs);
-      const existing = folder && find(folder, file.name);
+      const existing = folder && byParent.get(folder)?.get('f:' + file.name);
       if (existing && sameStamp(existing, file)) skipped++;
-      else if (existing) changed.push({ file, dirs, id: existing.id });
+      else if (existing) changed.push({ file, id: existing.id });
       else fresh.push({ file, dirs });
     }
     if (!fresh.length && !changed.length) return { queued: 0, skipped, changed: 0 };
 
-    const jobs = this.drive.mutate((x) => {
-      const out = [];
-      for (const { file, dirs } of fresh) {
-        let cur = x.ensureFolder(BACKUP_FOLDER, ROOT).id;
-        for (const d of [deviceName, ...dirs]) cur = x.ensureFolder(d, cur).id;
-        out.push({ file, parent: cur });
-      }
-      return out;
-    });
+    const jobs = fresh.length
+      ? this.drive.mutate((x) => {
+          const made = new Map(); // folder path -> id, so each folder is resolved once
+          const out = [];
+          for (const { file, dirs } of fresh) {
+            const key = dirs.join('/');
+            if (!made.has(key)) {
+              let cur = ROOT;
+              for (const d of [BACKUP_FOLDER, ...roots, ...dirs]) cur = x.ensureFolder(d, cur).id;
+              made.set(key, cur);
+            }
+            out.push({ file, parent: made.get(key) });
+          }
+          return out;
+        })
+      : [];
     if (jobs.length) this.uploader.add(jobs, { open });
     for (const c of changed) this.uploader.add([{ file: c.file, parent: ROOT }], { open, replaceId: c.id });
     return { queued: fresh.length + changed.length, skipped, changed: changed.length };

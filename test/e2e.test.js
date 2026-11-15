@@ -593,7 +593,8 @@ describe('end to end with fake Telegram', () => {
     expect(r.queued).toBe(2);
     await waitIdle(up);
     const top = store.index.children(ROOT).find((i) => i.name === BACKUP_FOLDER);
-    const dev = store.index.children(top.id).find((i) => i.name === 'Foto HP');
+    const device = store.index.children(top.id).find((i) => i.name === backup.cfg.device);
+    const dev = store.index.children(device.id).find((i) => i.name === 'Foto HP');
     expect(store.index.children(dev.id).map((i) => i.name).sort()).toEqual(['Liburan', 'a.txt']);
     const lib = store.index.children(dev.id).find((i) => i.name === 'Liburan');
     const photo = store.index.children(lib.id)[0];
@@ -619,5 +620,36 @@ describe('end to end with fake Telegram', () => {
     expect(mem.has('tdrive.backup')).toBe(true);
     await backup.disable();
     expect(backup.cfg.enabled).toBe(false);
+  }, 60000);
+
+  it('backup handles a huge folder quickly and skips node_modules / hidden folders', async () => {
+    const { BackupManager, walk } = await import('../src/core/backup.js');
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const added = [];
+    const stub = { tasks: [], active: false, addEventListener() {}, add: (jobs) => added.push(...jobs) };
+    const mem = new Map();
+    const bm = new BackupManager({ drive: store, uploader: stub, storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} }, store: null });
+    bm.cfg.device = 'Laptop Kerja';
+    bm.cfg.name = 'kerjaan';
+    const mkFile = (name) => ({ kind: 'file', name, getFile: async () => new File(['x'], name, { lastModified: 1 }) });
+    const mkDir = (name, kids) => ({ kind: 'directory', name, async *values() { yield* kids; } });
+    const many = Array.from({ length: 5000 }, (_, i) => mkFile(`f${i}.txt`));
+    const tree = mkDir('kerjaan', [mkDir('src', many), mkDir('node_modules', [mkFile('skip.js')]), mkDir('.git', [mkFile('HEAD')])]);
+    const found = await walk(tree);
+    expect(found.length).toBe(5000);
+    expect(found.some((f) => f.path.includes('node_modules') || f.path.includes('.git'))).toBe(false);
+    const entries = found.map((f) => ({ path: f.path, file: new File(['x'], f.path.split('/').pop(), { lastModified: 1 }) }));
+    const t0 = Date.now();
+    const r = bm.queue(entries, [bm.cfg.device, bm.cfg.name]);
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(r.queued).toBe(5000);
+    expect(added.length).toBe(5000);
+    const top = store.index.children(ROOT).find((i) => i.name === 'Backup Dari Perangkat');
+    const dev = store.index.children(top.id).find((i) => i.name === 'Laptop Kerja');
+    const folder = store.index.children(dev.id).find((i) => i.name === 'kerjaan');
+    expect(store.index.children(folder.id).map((i) => i.name)).toEqual(['src']);
+    expect(bm.backupFolderId()).toBe(folder.id);
   }, 60000);
 });

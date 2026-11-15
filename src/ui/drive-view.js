@@ -127,7 +127,7 @@ export class DriveView {
     const when = (t) => (t ? new Date(t).toLocaleString('id') : 'belum pernah');
     const statusText = () => {
       const st = b.status;
-      if (st.state === 'scanning') return 'Memeriksa folder…';
+      if (st.state === 'scanning') return `${st.stage || 'Memeriksa folder'}… ${st.found ? st.found + ' file' : ''}${st.done ? ` (${st.done} dibaca)` : ''}`;
       if (st.state === 'needs-permission') return 'Browser meminta izin akses folder lagi setiap halaman dibuka. Tekan “Izinkan akses”.';
       if (st.state === 'error') return 'Gagal: ' + st.error;
       if (st.state === 'idle') return `Terakhir ${when(b.cfg.last)}: ${st.found} file diperiksa, ${st.queued} diunggah, ${st.skipped} sudah ada.`;
@@ -148,7 +148,7 @@ export class DriveView {
     const render = () => {
       const c = b.cfg;
       const folderId = b.backupFolderId();
-      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke folder “Backup Perangkat” di drive. Searah: backup tidak pernah menghapus file di drive.')];
+      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke “Backup Dari Perangkat › nama perangkat › nama folder” di drive. Searah: backup tidak pernah menghapus file di drive.')];
       if (supportsFolderWatch()) {
         const toggle = h('input', { type: 'checkbox', checked: c.enabled, onchange: (e) => run(() => (e.target.checked ? b.enable() : b.disable())) });
         rows.push(h('label', { class: 'field-check' }, toggle, h('span', null, ' Backup otomatis')));
@@ -159,7 +159,9 @@ export class DriveView {
             [5, 15, 60].map((n) => h('option', { value: n, selected: c.intervalMin === n }, `Periksa tiap ${n} menit`)),
           );
           rows.push(
-            h('p', { class: 'muted' }, `Folder: ${c.name}`),
+            h('label', { class: 'field-label', for: 'bk-device' }, 'Nama perangkat ini'),
+            h('input', { class: 'input', id: 'bk-device', value: c.device, onchange: (e) => b.setOptions({ device: e.target.value }) }),
+            h('p', { class: 'muted' }, `Hasil: Backup Dari Perangkat › ${c.device} › ${c.name}`),
             every,
             openCheck(),
             h('p', { class: 'backup-status' }, statusText()),
