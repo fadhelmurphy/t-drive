@@ -220,6 +220,7 @@ export class DriveView {
     b.addEventListener('change', render);
     m = customDialog({
       title: 'Backup perangkat',
+      wide: true,
       body,
       actions: [h('button', { class: 'btn btn-primary', onclick: () => m.close() }, 'Selesai')],
       onClose: () => b.removeEventListener('change', render),
