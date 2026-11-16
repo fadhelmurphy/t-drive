@@ -182,7 +182,7 @@ export class DriveView {
               class: 'input',
               id: 'bk-exclude',
               rows: 3,
-              placeholder: 'node_modules\n.venv\n*.log\ndags/old\n/\\.(tmp|bak)$/',
+              placeholder: 'dags/old\ndist\n**/cache\n/\\.(csv|dat)$/',
               value: c.exclude || '',
               onchange: (e) => {
                 b.setOptions({ exclude: e.target.value });
@@ -190,7 +190,7 @@ export class DriveView {
               },
             }),
             makeExcluder(c.exclude).errors.length ? h('p', { class: 'backup-warn' }, `Aturan tidak valid: ${makeExcluder(c.exclude).errors.join(', ')}`) : null,
-            h('p', { class: 'muted share-hint' }, 'Nama folder/file (node_modules), jalur dari folder yang dipantau (dags/old), pola * ? ** , atau regex di antara garis miring (/\\.log$/). File yang sudah ada di drive tidak dihapus oleh aturan baru.'),
+            h('p', { class: 'muted share-hint' }, 'Sudah dilewati otomatis: file/folder tersembunyi (.git, .venv, .idea), node_modules, venv, __pycache__, *.log, *.pyc, *.tmp, *.bak, *.swp. Tambahan di sini: nama folder/file (nama), jalur dari folder yang dipantau (dags/old), pola * ? ** , atau regex di antara garis miring (/\\.log$/). File yang sudah ada di drive tidak dihapus oleh aturan baru.'),
             openCheck(),
             h(
               'label',

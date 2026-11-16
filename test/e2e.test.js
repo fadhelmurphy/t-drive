@@ -828,13 +828,13 @@ describe('end to end with fake Telegram', () => {
     const up = new Uploader(tg, store);
     const f = (name) => ({ kind: 'file', name, getFile: async () => new File([name], name, { lastModified: 5 }) });
     const d = (name, kids) => ({ kind: 'directory', name, async *values() { yield* kids; } });
-    let tree = [f('keep.py'), f('debug.log'), d('old', [f('x.py')]), d('src', [f('ok.py'), f('x.bak')])];
+    let tree = [f('keep.py'), f('data.csv'), d('old', [f('x.py')]), d('src', [f('ok.py'), f('x.dat')])];
     const root = () => ({ kind: 'directory', name: 'Repo', async *values() { yield* tree; }, queryPermission: async () => 'granted' });
     let cur = root();
     const mem = new Map();
     const bm = new BackupManager({ drive: store, uploader: up, storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} }, store: { get: async () => cur, set: async () => {}, del: async () => {} }, picker: async () => cur });
     bm.cfg.device = 'PC';
-    bm.setOptions({ exclude: '*.log\nold\n/\\.bak$/' });
+    bm.setOptions({ exclude: '*.csv\nold\n/\\.dat$/' });
     await bm.enable();
     await waitIdle(up);
     const all = () => {
@@ -849,10 +849,10 @@ describe('end to end with fake Telegram', () => {
     bm.setOptions({ exclude: '', mirrorDelete: true });
     await bm.scan();
     await waitIdle(up);
-    expect(all()).toEqual(['debug.log', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.bak']);
-    bm.setOptions({ exclude: 'old\n*.log' });
+    expect(all()).toEqual(['data.csv', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.dat']);
+    bm.setOptions({ exclude: 'old\n*.csv' });
     await bm.scan();
     await waitIdle(up);
-    expect(all()).toEqual(['debug.log', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.bak']);
+    expect(all()).toEqual(['data.csv', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.dat']);
   }, 60000);
 });

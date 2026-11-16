@@ -7,8 +7,8 @@ import { ROOT } from './drive-index.js';
 export const BACKUP_FOLDER = 'Backup Dari Perangkat';
 const LS_KEY = 'tdrive.backup';
 const SKIP = /^(\.|thumbs\.db$|desktop\.ini$|~\$)/i;
-const SKIP_EXT = /\.(tmp|crdownload|part|download)$/i;
-const SKIP_DIRS = /^(node_modules|__pycache__|\$recycle\.bin|system volume information)$/i;
+const SKIP_EXT = /\.(tmp|bak|log|pyc|pyo|swp|crdownload|part|download)$/i;
+const SKIP_DIRS = /^(node_modules|__pycache__|venv|site-packages|\$recycle\.bin|system volume information)$/i;
 const tick = () => new Promise((r) => setTimeout(r));
 
 /** A readable default for "which device is this" (browsers cannot tell the real computer name). */
