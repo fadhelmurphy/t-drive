@@ -694,4 +694,49 @@ describe('end to end with fake Telegram', () => {
     expect(r.held.empty).toBe(true);
     expect(live()).toEqual(['a.txt', 'c.txt']);
   }, 60000);
+
+  it('a paused backup upload continues from the watched folder after a reload (no file picker)', async () => {
+    const { BackupManager } = await import('../src/core/backup.js');
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const data = randomBytes(PLAIN_BLOCK * 2 + 5); // 3 blocks = one part
+    const dirOf = () => ({
+      kind: 'directory',
+      name: 'Besar',
+      async *values() { yield { kind: 'file', name: 'v.bin', getFile: async () => new File([data], 'v.bin', { lastModified: 77 }) }; },
+      queryPermission: async () => 'granted',
+    });
+    const mem = new Map();
+    const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+    const handleStore = { get: async () => dirOf(), set: async () => {}, del: async () => {} };
+
+    const up = new Uploader(tg, store, { storage });
+    const bm = new BackupManager({ drive: store, uploader: up, storage, store: handleStore, picker: async () => dirOf() });
+    bm.cfg.device = 'PC';
+    const origSave = tg.savePart.bind(tg);
+    tg.savePart = async (a) => {
+      if (a.part >= 4) throw new Error('DEAD');
+      return origSave(a);
+    };
+    await bm.enable();
+    await waitIdle(up);
+    expect(up.tasks[0].status).toBe('error');
+    await up.persisting;
+    await up.persist();
+
+    tg.savePart = origSave;
+    const up2 = new Uploader(tg, store, { storage });
+    await up2.restore();
+    expect(up2.tasks[0].status).toBe('paused');
+    expect(up2.tasks[0].backup).toBe(true);
+    const bm2 = new BackupManager({ drive: store, uploader: up2, storage, store: handleStore });
+    await bm2.init(); // permission is granted -> scans -> the paused upload picks the file up again
+    await waitIdle(up2);
+    expect(up2.tasks.length).toBe(1);
+    expect(up2.tasks[0].status).toBe('done');
+    const f = store.index.children(bm2.backupFolderId())[0];
+    expect(f.name).toBe('v.bin');
+    expect(await new Reader(tg).readAll(f)).toEqual(data);
+  }, 60000);
 });

@@ -16,7 +16,9 @@ export class UploadPanel {
   }
 
   /** Ask for the file again (browsers cannot reopen a local file by themselves). */
-  pick(t) {
+  async pick(t) {
+    // a backup upload is read again from the watched folder: no file to choose (needs this click for the permission)
+    if (t.backup && this.resumeBackup && (await this.resumeBackup())) return;
     const input = h('input', { type: 'file', hidden: true });
     input.addEventListener('change', () => {
       const f = input.files?.[0];
@@ -108,7 +110,7 @@ export class UploadPanel {
                 : t.status === 'error'
                   ? `Gagal: ${t.error}`
                   : t.status === 'paused'
-                    ? `Terhenti di ${pct}%. Pilih file yang sama untuk melanjutkan`
+                    ? t.backup ? `Terhenti di ${pct}%. Tekan Lanjutkan untuk membaca ulang dari folder backup` : `Terhenti di ${pct}%. Pilih file yang sama untuk melanjutkan`
                   : t.status === 'canceled'
                     ? 'Dibatalkan'
                     : t.status === 'queued'

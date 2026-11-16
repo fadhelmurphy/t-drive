@@ -101,6 +101,11 @@ export class DriveView {
     });
     this.backup = new BackupManager({ drive: this.drive, uploader: this.uploader });
     this.backup.addEventListener('queued', (e) => toast(`Backup: ${e.detail.queued} file baru/berubah diunggah${e.detail.trashed ? `, ${e.detail.trashed} dipindah ke Sampah` : ''}.`));
+    this.uploadPanel.resumeBackup = async () => {
+      if (!this.backup.handle) return false;
+      await this.backup.resume({ ask: true });
+      return true;
+    };
     this.backup.init().catch((e) => console.warn('Backup tidak bisa dilanjutkan', e));
     this.bindDrop();
     this.bindKeys();

@@ -301,7 +301,7 @@ export class BackupManager extends EventTarget {
     const ix = this.drive.index;
     const open = !!this.cfg.open;
     const busy = new Set(
-      this.uploader.tasks.filter((t) => !['done', 'canceled'].includes(t.status)).map((t) => `${t.name}|${t.size}|${t.lastModified || 0}`),
+      this.uploader.tasks.filter((t) => !['done', 'canceled', 'paused'].includes(t.status)).map((t) => `${t.name}|${t.size}|${t.lastModified || 0}`),
     );
     // one pass over the index; looking children up per file would be quadratic on big folders
     const byParent = new Map();
@@ -358,8 +358,8 @@ export class BackupManager extends EventTarget {
           return out;
         })
       : [];
-    if (jobs.length) this.uploader.add(jobs, { open });
-    for (const c of changed) this.uploader.add([{ file: c.file, parent: ROOT }], { open, replaceId: c.id });
+    if (jobs.length) this.uploader.add(jobs, { open, backup: true }); // a paused upload of the same file continues here
+    for (const c of changed) this.uploader.add([{ file: c.file, parent: ROOT }], { open, replaceId: c.id, backup: true });
     return { queued: fresh.length + changed.length, skipped, changed: changed.length };
   }
 }

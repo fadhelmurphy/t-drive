@@ -76,6 +76,7 @@ export class Uploader extends EventTarget {
         cur: r.cur ? { p: r.cur.p, fileId: BigInt(r.cur.fileId), blocks: r.cur.blocks } : null,
         resumable: true,
         convert: !!conv,
+        backup: !!r.backup,
         file: conv ? new ReaderSource(this.reader, conv) : null,
         loaded: 0,
         status: conv ? 'queued' : 'paused',
@@ -131,6 +132,7 @@ export class Uploader extends EventTarget {
       open: !!t.open,
       replaceId: t.replaceId || null,
       conv: t.file instanceof ReaderSource,
+      backup: !!t.backup,
       key: t.rawKey ? toB64(t.rawKey) : null,
       nonce: t.nonce ? toB64(t.nonce) : null,
       sent: t.sent,
@@ -186,7 +188,7 @@ export class Uploader extends EventTarget {
   }
 
   /** entries: [{ file: File, parent: folderId }]. open: store unencrypted, visible in Telegram. */
-  add(entries, { open = false, replaceId = null } = {}) {
+  add(entries, { open = false, replaceId = null, backup = false } = {}) {
     for (const { file, parent } of entries) {
       // the same file picked again continues its paused upload
       const paused = this.tasks.find((t) => t.status === 'paused' && t.name === file.name && t.open === open && same(t, file));
@@ -205,6 +207,7 @@ export class Uploader extends EventTarget {
         lastModified: file.lastModified,
         resumable: true,
         convert: file instanceof ReaderSource,
+        backup,
         sent: [],
         loaded: 0,
         status: 'queued',
