@@ -818,4 +818,41 @@ describe('end to end with fake Telegram', () => {
     await bm2.init();
     expect(bm2.handles.size).toBe(2);
   }, 60000);
+
+  it('backup exclusion rules skip folders and files, and never trash what was already backed up', async () => {
+    const { BackupManager, makeExcluder } = await import('../src/core/backup.js');
+    expect(makeExcluder('/(/').errors).toEqual(['/(/']);
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const up = new Uploader(tg, store);
+    const f = (name) => ({ kind: 'file', name, getFile: async () => new File([name], name, { lastModified: 5 }) });
+    const d = (name, kids) => ({ kind: 'directory', name, async *values() { yield* kids; } });
+    let tree = [f('keep.py'), f('debug.log'), d('old', [f('x.py')]), d('src', [f('ok.py'), f('x.bak')])];
+    const root = () => ({ kind: 'directory', name: 'Repo', async *values() { yield* tree; }, queryPermission: async () => 'granted' });
+    let cur = root();
+    const mem = new Map();
+    const bm = new BackupManager({ drive: store, uploader: up, storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} }, store: { get: async () => cur, set: async () => {}, del: async () => {} }, picker: async () => cur });
+    bm.cfg.device = 'PC';
+    bm.setOptions({ exclude: '*.log\nold\n/\\.bak$/' });
+    await bm.enable();
+    await waitIdle(up);
+    const all = () => {
+      const out = [];
+      const walk = (id, pre) => store.index.children(id).forEach((i) => (i.type === 'folder' ? walk(i.id, pre + i.name + '/') : out.push(pre + i.name)));
+      walk(bm.backupFolderId(), '');
+      return out.sort();
+    };
+    expect(all()).toEqual(['keep.py', 'src/ok.py']);
+
+    // a rule added later leaves the existing copy alone, even with mirror-delete on
+    bm.setOptions({ exclude: '', mirrorDelete: true });
+    await bm.scan();
+    await waitIdle(up);
+    expect(all()).toEqual(['debug.log', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.bak']);
+    bm.setOptions({ exclude: 'old\n*.log' });
+    await bm.scan();
+    await waitIdle(up);
+    expect(all()).toEqual(['debug.log', 'keep.py', 'old/x.py', 'src/ok.py', 'src/x.bak']);
+  }, 60000);
 });

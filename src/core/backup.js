@@ -58,15 +58,49 @@ const handleStore = {
   del: (key = 'dir') => kv('readwrite', (s) => s.delete(key)),
 };
 
+/**
+ * User exclusion rules, one per line. `/regex/` is tested on the path relative to the watched folder;
+ * anything else is a glob: `node_modules` (any folder or file with that name, at any depth),
+ * `src/cache` (from the root), `*.log`, `**\/tmp`. Lines starting with # are comments.
+ */
+export function makeExcluder(text = '') {
+  const tests = [];
+  const errors = [];
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    try {
+      if (line.length > 2 && line.startsWith('/') && line.endsWith('/')) {
+        const re = new RegExp(line.slice(1, -1), 'i');
+        tests.push((path) => re.test(path));
+        continue;
+      }
+      const p = line.replace(/^\.?\//, '').replace(/\/+$/, '');
+      const g = p
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*\*/g, '\u0000')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]')
+        .replace(/\u0000/g, '.*');
+      const re = new RegExp(p.includes('/') ? `^${g}($|/)` : `(^|/)${g}($|/)`, 'i');
+      tests.push((path) => re.test(path));
+    } catch {
+      errors.push(line);
+    }
+  }
+  return { errors, skip: tests.length ? (path) => tests.some((t) => t(path)) : null };
+}
+
 /** Recursively list files: [{ path: 'a/b/c.jpg', handle }] (hidden, temporary and dependency folders skipped). */
-export async function walk(dir, prefix = '', out = [], onCount = () => {}, errors = []) {
+export async function walk(dir, prefix = '', out = [], onCount = () => {}, errors = [], skip = null) {
   // a folder renamed or deleted while scanning (NotFoundError) is skipped and counted, not fatal
   const root = !prefix;
   try {
     for await (const h of dir.values()) {
       if (SKIP.test(h.name) || SKIP_EXT.test(h.name)) continue;
+      if (skip?.(prefix + h.name)) continue; // user exclusion (a skipped folder is not entered at all)
       if (h.kind === 'directory') {
-        if (!SKIP_DIRS.test(h.name)) await walk(h, prefix + h.name + '/', out, onCount, errors);
+        if (!SKIP_DIRS.test(h.name)) await walk(h, prefix + h.name + '/', out, onCount, errors, skip);
       } else if (h.kind === 'file') {
         out.push({ path: prefix + h.name, handle: h });
         if (out.length % 200 === 0) {
@@ -96,7 +130,7 @@ export class BackupManager extends EventTarget {
     this.storage = storage;
     this.store = store || (globalThis.indexedDB ? handleStore : null);
     this.picker = picker || (() => globalThis.showDirectoryPicker({ id: 'tdrive-backup', mode: 'read' }));
-    this.cfg = { enabled: false, name: '', folders: [], device: '', open: false, mirrorDelete: false, intervalMin: 15, last: 0, ...this.load() };
+    this.cfg = { enabled: false, name: '', folders: [], device: '', open: false, mirrorDelete: false, intervalMin: 15, exclude: '', last: 0, ...this.load() };
     if (!this.cfg.device) this.cfg.device = guessDeviceName();
     // single-folder setups saved by earlier versions become a one-entry list
     if (!this.cfg.folders?.length) this.cfg.folders = this.cfg.name ? [{ key: 'dir', name: this.cfg.name }] : [];
@@ -243,7 +277,8 @@ export class BackupManager extends EventTarget {
     this.set('off');
   }
 
-  setOptions({ open, intervalMin, device, mirrorDelete }) {
+  setOptions({ open, intervalMin, device, mirrorDelete, exclude }) {
+    if (exclude !== undefined) this.cfg.exclude = String(exclude);
     if (open !== undefined) this.cfg.open = !!open;
     if (mirrorDelete !== undefined) {
       this.cfg.mirrorDelete = !!mirrorDelete;
@@ -274,6 +309,7 @@ export class BackupManager extends EventTarget {
     if (this.uploader.active) return void (this.pending = true);
     this.scanning = true;
     const multi = this.cfg.folders.length > 1;
+    const ex = makeExcluder(this.cfg.exclude);
     const total = { found: 0, queued: 0, skipped: 0, changed: 0, trashed: 0 };
     const held = [];
     const problems = [];
@@ -286,7 +322,7 @@ export class BackupManager extends EventTarget {
         try {
           this.set('scanning', { stage: label + 'Membaca folder', found: total.found });
           const walkErrors = [];
-          const found = await walk(handle, '', [], (n) => this.set('scanning', { stage: label + 'Membaca folder', found: total.found + n }), walkErrors);
+          const found = await walk(handle, '', [], (n) => this.set('scanning', { stage: label + 'Membaca folder', found: total.found + n }), walkErrors, ex.skip);
           this.set('scanning', { stage: label + 'Membaca info file', found: total.found + found.length });
           const entries = [];
           let n = 0;
@@ -303,7 +339,7 @@ export class BackupManager extends EventTarget {
           await tick();
           const r = this.queue(entries, [this.cfg.device, f.name]);
           // optional: files that vanished from the device go to the Trash (never deleted for good)
-          const m = this.cfg.mirrorDelete ? this.mirror(entries, failed, f.name) : { trashed: 0, held: null };
+          const m = this.cfg.mirrorDelete ? this.mirror(entries, failed, f.name, ex.skip) : { trashed: 0, held: null };
           total.found += entries.length;
           total.queued += r.queued;
           total.skipped += r.skipped;
@@ -332,7 +368,7 @@ export class BackupManager extends EventTarget {
   }
 
   /** Backed-up files (in this device folder's copy) that no longer exist on the device. */
-  staleFiles(entries, name) {
+  staleFiles(entries, name, skip = null) {
     const base = this.backupFolderId(name);
     if (!base) return { stale: [], total: 0 };
     const ix = this.drive.index;
@@ -345,13 +381,14 @@ export class BackupManager extends EventTarget {
       }
     };
     walkDrive(base, '');
-    return { stale: files.filter((f) => !seen.has(f.path)).map((f) => f.id), total: files.length };
+    // excluded paths are left alone: adding a rule later must not send the old copy to the Trash
+    return { stale: files.filter((f) => !seen.has(f.path) && !skip?.(f.path)).map((f) => f.id), total: files.length };
   }
 
   /** Move vanished files to the Trash, with guards against wiping the backup by mistake. */
-  mirror(entries, failed, name) {
+  mirror(entries, failed, name, skip = null) {
     if (failed) return { trashed: 0, held: null }; // an incomplete scan proves nothing is gone
-    const { stale, total } = this.staleFiles(entries, name);
+    const { stale, total } = this.staleFiles(entries, name, skip);
     if (!stale.length) return { trashed: 0, held: null };
     // empty folder (wrong pick, drive unplugged) or a mass vanish: ask before trashing anything
     if (!entries.length || (stale.length > 20 && stale.length > total / 2)) return { trashed: 0, held: { ids: stale, total, empty: !entries.length } };

@@ -10,7 +10,7 @@ import { streamUrl } from '../core/stream.js';
 import { parseAllowed, createShare, revokeShare, shareLink } from '../core/share.js';
 import { formatBytes, formatDate } from '../core/util.js';
 
-import { BackupManager, supportsFolderWatch } from '../core/backup.js';
+import { BackupManager, supportsFolderWatch, makeExcluder } from '../core/backup.js';
 
 const SECTIONS = [
   { id: 'drive', label: 'Drive Saya', icon: 'drive' },
@@ -177,6 +177,20 @@ export class DriveView {
               ),
             ),
             every,
+            h('label', { class: 'field-label', for: 'bk-exclude' }, 'Jangan backup (satu aturan per baris)'),
+            h('textarea', {
+              class: 'input',
+              id: 'bk-exclude',
+              rows: 3,
+              placeholder: 'node_modules\n.venv\n*.log\ndags/old\n/\\.(tmp|bak)$/',
+              value: c.exclude || '',
+              onchange: (e) => {
+                b.setOptions({ exclude: e.target.value });
+                render();
+              },
+            }),
+            makeExcluder(c.exclude).errors.length ? h('p', { class: 'backup-warn' }, `Aturan tidak valid: ${makeExcluder(c.exclude).errors.join(', ')}`) : null,
+            h('p', { class: 'muted share-hint' }, 'Nama folder/file (node_modules), jalur dari folder yang dipantau (dags/old), pola * ? ** , atau regex di antara garis miring (/\\.log$/). File yang sudah ada di drive tidak dihapus oleh aturan baru.'),
             openCheck(),
             h(
               'label',
