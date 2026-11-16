@@ -95,7 +95,7 @@ export class DriveView {
     this.drive.addEventListener('saved', () => this.setSave('Tersimpan di Telegram'));
     this.drive.addEventListener('save-error', (e) => this.onSaveError(e.detail));
     this.drive.addEventListener('slow', (e) => toast(`Menyimpan terasa lambat (${e.detail || 'menunggu Telegram'}). Tunggu dulu, jangan muat ulang.`, { timeout: 8000 }));
-    this.drive.addEventListener('wait', (e) => toast(`Telegram meminta menunggu ${e.detail} detik sebelum lanjut…`, { timeout: 8000 }));
+    this.drive.addEventListener('wait', (e) => toast(`Telegram membatasi sementara (±${Math.ceil(e.detail / 60)} menit). Unggahan lanjut otomatis — biarkan tab terbuka.`, { timeout: 8000 }));
     this.uploader.addEventListener('change', () => {
       if (!this.statsFrame) this.statsFrame = requestAnimationFrame(() => ((this.statsFrame = 0), this.renderNav()));
     });

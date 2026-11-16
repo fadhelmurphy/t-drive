@@ -37,17 +37,31 @@ function isRetryable(e) {
  * Run `fn` with retries for transient errors and long FLOOD_WAITs.
  * onWait(seconds) is called before sleeping for a flood wait.
  */
+// One FLOOD_WAIT applies to the whole account: every request waits for it, so parallel
+// workers don't keep hitting Telegram (which extends the penalty).
+let floodUntil = 0;
+export const floodRemaining = () => Math.max(0, Math.ceil((floodUntil - Date.now()) / 1000));
+
 export async function withRetry(fn, { tries = 6, onWait, signal } = {}) {
   let attempt = 0;
+  let told = false;
   for (;;) {
     signal?.throwIfAborted();
+    const left = floodRemaining();
+    if (left > 0) {
+      if (!told) onWait?.(left);
+      told = true;
+      await sleep(left * 1000, signal);
+      continue;
+    }
     try {
       return await fn();
     } catch (e) {
       attempt++;
       if (isFloodWait(e)) {
+        floodUntil = Math.max(floodUntil, Date.now() + (e.seconds + 1) * 1000);
         onWait?.(e.seconds);
-        await sleep((e.seconds + 1) * 1000, signal);
+        told = true;
         continue; // flood waits do not count as failures
       }
       if (attempt >= tries || !isRetryable(e)) throw e;
