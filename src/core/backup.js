@@ -89,7 +89,7 @@ export class BackupManager extends EventTarget {
     this.storage = storage;
     this.store = store || (globalThis.indexedDB ? handleStore : null);
     this.picker = picker || (() => globalThis.showDirectoryPicker({ id: 'tdrive-backup', mode: 'read' }));
-    this.cfg = { enabled: false, name: '', device: '', open: false, intervalMin: 15, last: 0, ...this.load() };
+    this.cfg = { enabled: false, name: '', device: '', open: false, mirrorDelete: false, intervalMin: 15, last: 0, ...this.load() };
     if (!this.cfg.device) this.cfg.device = guessDeviceName();
     this.handle = null;
     this.status = { state: 'off', found: 0, queued: 0, skipped: 0, error: '' };
@@ -187,8 +187,12 @@ export class BackupManager extends EventTarget {
     this.set('off');
   }
 
-  setOptions({ open, intervalMin, device }) {
+  setOptions({ open, intervalMin, device, mirrorDelete }) {
     if (open !== undefined) this.cfg.open = !!open;
+    if (mirrorDelete !== undefined) {
+      this.cfg.mirrorDelete = !!mirrorDelete;
+      if (!mirrorDelete) this.status = { ...this.status, held: null };
+    }
     if (device !== undefined) this.cfg.device = String(device).trim().replace(/[\\/]+/g, '-') || guessDeviceName();
     if (intervalMin) {
       this.cfg.intervalMin = intervalMin;
@@ -219,26 +223,68 @@ export class BackupManager extends EventTarget {
       this.set('scanning', { stage: 'Membaca info file', found: found.length });
       const entries = [];
       let n = 0;
+      let failed = 0;
       await pool(found, 16, async (f) => {
         try {
           entries.push({ path: f.path, file: await f.handle.getFile() });
-        } catch {} // vanished or locked while scanning
+        } catch {
+          failed++; // vanished or locked while scanning
+        }
         if (++n % 200 === 0) this.set('scanning', { stage: 'Membaca info file', found: found.length, done: n });
       });
       this.set('scanning', { stage: 'Membandingkan dengan drive', found: entries.length });
       await tick();
       const r = this.queue(entries, [this.cfg.device, this.cfg.name]);
+      // optional: files that vanished from the device go to the Trash (never deleted for good)
+      const m = this.cfg.mirrorDelete ? this.mirror(entries, failed) : { trashed: 0, held: null };
       this.cfg.last = Date.now();
       this.save();
-      this.set('idle', { found: entries.length, queued: r.queued, skipped: r.skipped });
-      if (r.queued) this.dispatchEvent(new CustomEvent('queued', { detail: r }));
-      return r;
+      this.set('idle', { found: entries.length, queued: r.queued, skipped: r.skipped, trashed: m.trashed, held: m.held });
+      if (r.queued || m.trashed) this.dispatchEvent(new CustomEvent('queued', { detail: { ...r, trashed: m.trashed } }));
+      return { ...r, trashed: m.trashed, held: m.held };
     } catch (e) {
       const denied = e?.name === 'NotAllowedError' || e?.name === 'SecurityError';
       this.set(denied ? 'needs-permission' : 'error', { error: e?.message || String(e) });
     } finally {
       this.scanning = false;
     }
+  }
+
+  /** Backed-up files (in this device folder's copy) that no longer exist on the device. */
+  staleFiles(entries) {
+    const base = this.backupFolderId();
+    if (!base) return { stale: [], total: 0 };
+    const ix = this.drive.index;
+    const seen = new Set(entries.map((e) => e.path.toLowerCase())); // case-insensitive: never trash over a case change
+    const files = [];
+    const walkDrive = (folder, prefix) => {
+      for (const it of ix.children(folder)) {
+        if (it.type === 'folder') walkDrive(it.id, prefix + it.name.toLowerCase() + '/');
+        else files.push({ id: it.id, path: prefix + it.name.toLowerCase() });
+      }
+    };
+    walkDrive(base, '');
+    return { stale: files.filter((f) => !seen.has(f.path)).map((f) => f.id), total: files.length };
+  }
+
+  /** Move vanished files to the Trash, with guards against wiping the backup by mistake. */
+  mirror(entries, failed) {
+    if (failed) return { trashed: 0, held: null }; // an incomplete scan proves nothing is gone
+    const { stale, total } = this.staleFiles(entries);
+    if (!stale.length) return { trashed: 0, held: null };
+    // empty folder (wrong pick, drive unplugged) or a mass vanish: ask before trashing anything
+    if (!entries.length || (stale.length > 20 && stale.length > total / 2)) return { trashed: 0, held: { ids: stale, total, empty: !entries.length } };
+    this.drive.mutate((x) => x.trashItems(stale));
+    return { trashed: stale.length, held: null };
+  }
+
+  /** The user confirmed a held mass-trash. */
+  confirmHeld() {
+    const held = this.status.held;
+    if (!held) return;
+    const ids = held.ids.filter((id) => this.drive.index.get(id));
+    this.drive.mutate((x) => x.trashItems(ids));
+    this.set('idle', { trashed: ids.length, held: null });
   }
 
   /** Manual mode: back up files the user picked (works on any browser, e.g. photos on a phone). */

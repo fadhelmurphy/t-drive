@@ -100,7 +100,7 @@ export class DriveView {
       if (!this.statsFrame) this.statsFrame = requestAnimationFrame(() => ((this.statsFrame = 0), this.renderNav()));
     });
     this.backup = new BackupManager({ drive: this.drive, uploader: this.uploader });
-    this.backup.addEventListener('queued', (e) => toast(`Backup: ${e.detail.queued} file baru/berubah diunggah.`));
+    this.backup.addEventListener('queued', (e) => toast(`Backup: ${e.detail.queued} file baru/berubah diunggah${e.detail.trashed ? `, ${e.detail.trashed} dipindah ke Sampah` : ''}.`));
     this.backup.init().catch((e) => console.warn('Backup tidak bisa dilanjutkan', e));
     this.bindDrop();
     this.bindKeys();
@@ -130,7 +130,7 @@ export class DriveView {
       if (st.state === 'scanning') return `${st.stage || 'Memeriksa folder'}… ${st.found ? st.found + ' file' : ''}${st.done ? ` (${st.done} dibaca)` : ''}`;
       if (st.state === 'needs-permission') return 'Browser meminta izin akses folder lagi setiap halaman dibuka. Tekan “Izinkan akses”.';
       if (st.state === 'error') return 'Gagal: ' + st.error;
-      if (st.state === 'idle') return `Terakhir ${when(b.cfg.last)}: ${st.found} file diperiksa, ${st.queued} diunggah, ${st.skipped} sudah ada.`;
+      if (st.state === 'idle') return `Terakhir ${when(b.cfg.last)}: ${st.found} file diperiksa, ${st.queued} diunggah, ${st.skipped} sudah ada${st.trashed ? `, ${st.trashed} dipindah ke Sampah` : ''}.`;
       return b.cfg.enabled ? 'Menunggu pemeriksaan pertama…' : 'Nonaktif.';
     };
     const openCheck = () => {
@@ -148,7 +148,7 @@ export class DriveView {
     const render = () => {
       const c = b.cfg;
       const folderId = b.backupFolderId();
-      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke “Backup Dari Perangkat › nama perangkat › nama folder” di drive. Searah: backup tidak pernah menghapus file di drive.')];
+      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke “Backup Dari Perangkat › nama perangkat › nama folder” di drive. Searah: secara bawaan backup tidak menghapus file di drive.')];
       if (supportsFolderWatch()) {
         const toggle = h('input', { type: 'checkbox', checked: c.enabled, onchange: (e) => run(() => (e.target.checked ? b.enable() : b.disable())) });
         rows.push(h('label', { class: 'field-check' }, toggle, h('span', null, ' Backup otomatis')));
@@ -164,6 +164,20 @@ export class DriveView {
             h('p', { class: 'muted' }, `Hasil: Backup Dari Perangkat › ${c.device} › ${c.name}`),
             every,
             openCheck(),
+            h(
+              'label',
+              { class: 'field-check' },
+              h('input', { type: 'checkbox', checked: !!c.mirrorDelete, onchange: (e) => b.setOptions({ mirrorDelete: e.target.checked }) }),
+              h('span', null, ' Sinkronkan penghapusan: file yang hilang dari folder di perangkat dipindah ke Sampah di drive (bisa dipulihkan)'),
+            ),
+            b.status.held
+              ? h(
+                  'div',
+                  { class: 'backup-warn' },
+                  h('p', null, b.status.held.empty ? `Folder di perangkat terlihat kosong, tapi di drive ada ${b.status.held.total} file. Tidak ada yang dihapus. Pastikan folder dan disk-nya benar.` : `${b.status.held.ids.length} dari ${b.status.held.total} file hilang dari perangkat. Jumlahnya besar, jadi belum dipindah ke Sampah.`),
+                  b.status.held.empty ? null : h('button', { class: 'btn btn-outline', onclick: () => b.confirmHeld() }, `Pindahkan ${b.status.held.ids.length} file ke Sampah`),
+                )
+              : null,
             h('p', { class: 'backup-status' }, statusText()),
             h(
               'div',

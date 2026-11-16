@@ -91,6 +91,7 @@ Menu **Backup perangkat** (sidebar atau menu akun) menyalin isi satu folder di p
 
 - **Desktop (Chrome/Edge):** pilih folder sekali; folder itu diperiksa tiap 5/15/60 menit selama T-Drive terbuka. Hanya file baru atau yang berubah (ukuran/tanggal ubah) yang diunggah; file tersembunyi dan sementara dilewati. Setelah halaman dibuka ulang, browser meminta izin akses folder lagi (tombol "Izinkan akses").
 - **HP/Safari/Firefox:** browser tidak mengizinkan pemantauan folder, jadi tersedia mode manual: pilih foto/file, dan yang sudah pernah dicadangkan dilewati.
-- Searah: backup tidak pernah menghapus file di drive. File yang kamu hapus di drive tapi masih ada di perangkat akan diunggah lagi.
+- Searah: bawaannya backup tidak pernah menghapus file di drive. File yang kamu hapus di drive tapi masih ada di perangkat akan diunggah lagi.
+- Opsi **Sinkronkan penghapusan** (mati secara bawaan): file yang hilang dari folder di perangkat dipindah ke **Sampah** (bisa dipulihkan, tidak dihapus permanen). Pengaman: tidak dijalankan kalau pemindaian tidak lengkap; kalau folder terlihat kosong atau lebih dari separuh file (dan >20) hilang sekaligus, T-Drive menahan dan meminta konfirmasi.
 - Opsi "Simpan terbuka" menyimpan file tanpa enkripsi supaya terlihat di Telegram.
 

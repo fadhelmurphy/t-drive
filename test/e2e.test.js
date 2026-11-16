@@ -477,6 +477,7 @@ describe('end to end with fake Telegram', () => {
       let o = 0;
       for (const c of back) (all.set(c, o), (o += c.length));
       expect(all).toEqual(data);
+      await up3.persisting; // the record is removed asynchronously
       expect(mem.has('tdrive.pending')).toBe(false);
     } finally {
       LAYOUT.blocksPerPart = saved;
@@ -561,6 +562,7 @@ describe('end to end with fake Telegram', () => {
     const o = store.index.get(item.id);
     expect(o.open).toBe(true);
     expect(await new Reader(tg).readAll(o)).toEqual(data);
+    await up2.persisting;
     expect(mem.has('tdrive.pending')).toBe(false);
   }, 60000);
 
@@ -651,5 +653,45 @@ describe('end to end with fake Telegram', () => {
     const folder = store.index.children(dev.id).find((i) => i.name === 'kerjaan');
     expect(store.index.children(folder.id).map((i) => i.name)).toEqual(['src']);
     expect(bm.backupFolderId()).toBe(folder.id);
+  }, 60000);
+
+  it('backup mirror-delete is optional, trashes only vanished files, and guards against wiping', async () => {
+    const { BackupManager } = await import('../src/core/backup.js');
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const up = new Uploader(tg, store);
+    const mkFile = (name, lm = 1) => ({ kind: 'file', name, getFile: async () => new File([name], name, { lastModified: lm }) });
+    let kids = [mkFile('a.txt'), mkFile('b.txt'), mkFile('c.txt')];
+    const dir = () => ({ kind: 'directory', name: 'Dok', async *values() { yield* kids; }, queryPermission: async () => 'granted' });
+    let cur = dir();
+    const mem = new Map();
+    const bm = new BackupManager({ drive: store, uploader: up, storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} }, store: { get: async () => cur, set: async () => {}, del: async () => {} }, picker: async () => cur });
+    bm.cfg.device = 'PC';
+    await bm.enable();
+    await waitIdle(up);
+    const live = () => store.index.children(bm.backupFolderId()).map((i) => i.name).sort();
+    expect(live()).toEqual(['a.txt', 'b.txt', 'c.txt']);
+
+    kids = [mkFile('a.txt'), mkFile('c.txt')]; // b.txt deleted on the PC
+    cur = dir();
+    bm.handle = cur;
+    let r = await bm.scan(); // option off: nothing is removed
+    expect(r.trashed).toBe(0);
+    expect(live()).toEqual(['a.txt', 'b.txt', 'c.txt']);
+
+    bm.setOptions({ mirrorDelete: true });
+    r = await bm.scan();
+    expect(r.trashed).toBe(1);
+    expect(live()).toEqual(['a.txt', 'c.txt']);
+    expect(store.index.trash().map((i) => i.name)).toEqual(['b.txt']); // trash, not gone for good
+
+    kids = []; // empty folder: held, nothing trashed
+    cur = dir();
+    bm.handle = cur;
+    r = await bm.scan();
+    expect(r.trashed).toBe(0);
+    expect(r.held.empty).toBe(true);
+    expect(live()).toEqual(['a.txt', 'c.txt']);
   }, 60000);
 });

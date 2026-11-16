@@ -313,3 +313,5 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inher
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .backup-status { font-size: 13px; margin: 0; }
 .nav-dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.backup-warn { border: 1px solid var(--danger, #d93025); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.backup-warn p { margin: 0 0 8px; }
