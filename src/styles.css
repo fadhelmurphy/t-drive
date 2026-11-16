@@ -203,8 +203,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .menu-header.muted { font-weight: 400; padding-top: 0; font-size: 13px; }
 
 /* ---------- Modal ---------- */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: grid; place-items: center; padding: 16px; z-index: 60; }
-.modal { width: 100%; max-width: 420px; background: var(--surface); border-radius: 24px; padding: 24px; box-shadow: var(--shadow-lg); }
+.modal-backdrop { position: fixed; inset: 0; overflow: hidden; background: rgba(0, 0, 0, 0.4); display: grid; place-items: center; padding: 16px; z-index: 60; }
+.modal { width: 100%; max-width: 420px; max-height: calc(100dvh - 32px); overflow-y: auto; background: var(--surface); border-radius: 24px; padding: 24px; box-shadow: var(--shadow-lg); }
 .modal-title { margin: 0 0 16px; font-size: 22px; font-weight: 400; }
 .modal-body { display: flex; flex-direction: column; gap: 8px; }
 .modal-text { margin: 0; color: var(--muted); line-height: 1.5; }
