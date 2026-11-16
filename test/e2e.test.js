@@ -484,6 +484,39 @@ describe('end to end with fake Telegram', () => {
     }
   }, 60000);
 
+  it('an upload whose parts are all sent finishes after a reload without picking the file again', async () => {
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const data = randomBytes(PLAIN_BLOCK + 50);
+    const file = new File([data], 'done.bin', { lastModified: 77 });
+    const mem = new Map();
+    const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+    const origMutate = store.mutate.bind(store);
+    store.mutate = () => {
+      throw new Error('INDEX_FAIL');
+    };
+    const up = new Uploader(tg, store, { storage });
+    up.add([{ file, parent: ROOT }]);
+    await waitIdle(up);
+    expect(up.tasks[0].status).toBe('error');
+    await up.persisting;
+
+    store.mutate = origMutate;
+    const up2 = new Uploader(tg, store, { storage });
+    await up2.restore();
+    const t = up2.tasks[0];
+    expect(t.status).toBe('paused');
+    expect(up2.canFinishWithoutFile(t)).toBe(true);
+    up2.resume(t.id); // no file needed
+    await waitIdle(up2);
+    expect(up2.tasks[0].status).toBe('done');
+    const f = store.index.children(ROOT).find((i) => i.name === 'done.bin');
+    const back = [];
+    for await (const c of new Reader(tg).range(f, 0, f.size - 1)) back.push(c);
+    expect(Buffer.concat(back.map((c) => Buffer.from(c)))).toEqual(Buffer.from(data));
+  }, 60000);
+
   it('a single-part upload resumes mid-part after a reload by reusing the Telegram file id', async () => {
     const tg = new FakeTg();
     const store = new DriveStore(tg);

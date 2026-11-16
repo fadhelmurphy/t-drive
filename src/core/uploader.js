@@ -157,9 +157,29 @@ export class Uploader extends EventTarget {
   }
 
   /** Continue a paused upload with the same file. Throws if the file differs. */
+  /** Every part is already on Telegram: only the index entry is left, no need to pick the file again. */
+  canFinishWithoutFile(t) {
+    return t.status === 'paused' && !t.convert && t.size > 0 && t.sent?.length >= partCount(t.size, t.open ? OPEN_BLOCK : PLAIN_BLOCK);
+  }
+
   resume(id, file) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t || t.status !== 'paused') return;
+    if (!file && this.canFinishWithoutFile(t)) {
+      file = {
+        size: t.size,
+        name: t.name,
+        type: '',
+        lastModified: t.lastModified,
+        slice() {
+          throw new Error('Sebagian bagian file hilang di Telegram. Pilih file yang sama untuk mengunggah ulang.');
+        },
+      };
+      Object.assign(t, { file, status: 'queued', error: null, note: '', ctrl: new AbortController() });
+      this.emit();
+      this.pump();
+      return;
+    }
     if (!same(t, file)) throw new Error('File ini berbeda dari yang diunggah sebelumnya (ukuran atau tanggal ubah tidak sama).');
     Object.assign(t, { file, status: 'queued', error: null, note: '', ctrl: new AbortController() });
     this.emit();
