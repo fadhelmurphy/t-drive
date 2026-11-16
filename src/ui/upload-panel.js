@@ -19,6 +19,18 @@ export class UploadPanel {
   async pick(t) {
     // a backup upload is read again from the watched folder: no file to choose (needs this click for the permission)
     if (t.backup && this.resumeBackup && (await this.resumeBackup())) return;
+    // an older upload made from the watched folder (saved before it was marked as a backup): look for it there first
+    if (!t.backup && !t.manual && this.resumeBackup && this.uploader.canFinishWithoutFile?.(t) === false) {
+      const found = await this.resumeBackup();
+      if (found) {
+        if (t.status === 'paused') {
+          t.manual = true; // not in the backup folder: the next click asks for the file
+          toast('File tidak ada di folder backup. Tekan Lanjutkan lagi untuk memilih file secara manual.');
+          this.render();
+        }
+        return;
+      }
+    }
     if (this.uploader.canFinishWithoutFile(t)) {
       this.uploader.resume(t.id);
       return;
