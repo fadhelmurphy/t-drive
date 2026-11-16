@@ -112,7 +112,8 @@ export class DriveView {
     window.addEventListener('focus', () => this.checkStale());
     document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.checkStale());
     window.addEventListener('popstate', (e) => this.restoreHistory(e.state));
-    history.replaceState(this.historyState(), '');
+    Object.assign(this.state, this.viewFromHash()); // reopen the folder from the URL after a refresh
+    history.replaceState(this.historyState(), '', this.urlFor());
 
     if (!this.streamOk) {
       toast('Streaming tidak tersedia di browser ini (service worker nonaktif). Pratinjau & unduhan memakai memori, maks. 1 GB.', { timeout: 10000 });
@@ -214,7 +215,7 @@ export class DriveView {
         );
       }
       if (folderId) rows.push(h('button', { class: 'btn btn-text', onclick: () => (m.close(), this.go('drive', folderId)) }, 'Buka folder backup'));
-      body.replaceChildren(...rows);
+      body.replaceChildren(...rows.filter(Boolean));
     };
     b.addEventListener('change', render);
     m = customDialog({
@@ -328,17 +329,37 @@ export class DriveView {
     return { section: this.state.section, folder: this.state.folder };
   }
 
+  /** The address bar mirrors the view (#/f/<folder>, #/trash, ...) so a refresh stays where you were. */
+  urlFor(section = this.state.section, folder = this.state.folder) {
+    let hash = '';
+    if (section === 'drive' && folder !== ROOT) hash = `#/f/${folder}`;
+    else if (section !== 'drive' && section !== 'search') hash = `#/${section}`;
+    return location.pathname + location.search + hash;
+  }
+
+  /** Read the view from the address bar; unknown or deleted folders fall back to the root. */
+  viewFromHash(hash = location.hash) {
+    const f = /^#\/f\/([\w-]+)$/.exec(hash);
+    if (f) {
+      const it = this.index.get(f[1]);
+      return it && it.type === 'folder' && this.index.isLive(f[1]) ? { section: 'drive', folder: f[1] } : { section: 'drive', folder: ROOT };
+    }
+    const sec = /^#\/(recent|starred|shared|trash)$/.exec(hash);
+    return sec ? { section: sec[1], folder: ROOT } : { section: 'drive', folder: ROOT };
+  }
+
   go(section, folder = ROOT, push = true) {
     Object.assign(this.state, { section, folder, query: section === 'search' ? this.state.query : '' });
     if (section !== 'search') this.search.value = '';
     this.state.selection.clear();
     this.shell.classList.remove('nav-open');
-    if (push) history.pushState(this.historyState(), '');
+    if (push) history.pushState(this.historyState(), '', this.urlFor());
     this.render();
     this.mainEl.focus({ preventScroll: true });
   }
 
   restoreHistory(s) {
+    s = s || this.viewFromHash(); // the hash was edited by hand
     if (!s) return;
     const folder = s.folder === ROOT || this.index.isLive(s.folder) ? s.folder : ROOT;
     this.go(s.section === 'search' ? 'drive' : s.section, folder, false);
