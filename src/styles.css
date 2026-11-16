@@ -309,7 +309,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inherit; }
 .up-actions { display: inline-flex; align-items: center; gap: 2px; }
 
-.backup-box { display: flex; flex-direction: column; gap: 10px; min-width: min(420px, 80vw); }
+.backup-box { display: flex; flex-direction: column; gap: 10px; }
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .backup-status { font-size: 13px; margin: 0; }
 .nav-dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
