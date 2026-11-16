@@ -59,18 +59,25 @@ const handleStore = {
 };
 
 /** Recursively list files: [{ path: 'a/b/c.jpg', handle }] (hidden, temporary and dependency folders skipped). */
-export async function walk(dir, prefix = '', out = [], onCount = () => {}) {
-  for await (const h of dir.values()) {
-    if (SKIP.test(h.name) || SKIP_EXT.test(h.name)) continue;
-    if (h.kind === 'directory') {
-      if (!SKIP_DIRS.test(h.name)) await walk(h, prefix + h.name + '/', out, onCount);
-    } else if (h.kind === 'file') {
-      out.push({ path: prefix + h.name, handle: h });
-      if (out.length % 200 === 0) {
-        onCount(out.length);
-        await tick(); // keep the page responsive on huge folders
+export async function walk(dir, prefix = '', out = [], onCount = () => {}, errors = []) {
+  // a folder renamed or deleted while scanning (NotFoundError) is skipped and counted, not fatal
+  const root = !prefix;
+  try {
+    for await (const h of dir.values()) {
+      if (SKIP.test(h.name) || SKIP_EXT.test(h.name)) continue;
+      if (h.kind === 'directory') {
+        if (!SKIP_DIRS.test(h.name)) await walk(h, prefix + h.name + '/', out, onCount, errors);
+      } else if (h.kind === 'file') {
+        out.push({ path: prefix + h.name, handle: h });
+        if (out.length % 200 === 0) {
+          onCount(out.length);
+          await tick(); // keep the page responsive on huge folders
+        }
       }
     }
+  } catch (e) {
+    if (root || e?.name !== 'NotFoundError') throw e;
+    errors.push(prefix);
   }
   return out;
 }
@@ -219,11 +226,12 @@ export class BackupManager extends EventTarget {
     this.scanning = true;
     this.set('scanning', { stage: 'Membaca folder', found: 0 });
     try {
-      const found = await walk(this.handle, '', [], (n) => this.set('scanning', { stage: 'Membaca folder', found: n }));
+      const walkErrors = [];
+      const found = await walk(this.handle, '', [], (n) => this.set('scanning', { stage: 'Membaca folder', found: n }), walkErrors);
       this.set('scanning', { stage: 'Membaca info file', found: found.length });
       const entries = [];
       let n = 0;
-      let failed = 0;
+      let failed = walkErrors.length; // an incomplete listing must never trigger mirror-delete
       await pool(found, 16, async (f) => {
         try {
           entries.push({ path: f.path, file: await f.handle.getFile() });
@@ -244,7 +252,8 @@ export class BackupManager extends EventTarget {
       return { ...r, trashed: m.trashed, held: m.held };
     } catch (e) {
       const denied = e?.name === 'NotAllowedError' || e?.name === 'SecurityError';
-      this.set(denied ? 'needs-permission' : 'error', { error: e?.message || String(e) });
+      const gone = e?.name === 'NotFoundError' ? 'Folder yang dipantau tidak ditemukan (dihapus, dipindah atau diganti namanya). Tekan “Ganti folder”.' : null;
+      this.set(denied ? 'needs-permission' : 'error', { error: gone || e?.message || String(e) });
     } finally {
       this.scanning = false;
     }
