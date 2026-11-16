@@ -318,3 +318,5 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inher
 .backup-warn p { margin: 0 0 8px; }
 .backup-box .input, .backup-box select { width: 100%; box-sizing: border-box; max-width: 100%; }
 .backup-box { max-width: 100%; box-sizing: border-box; }
+.backup-folder { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0 6px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.backup-folder-path { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }

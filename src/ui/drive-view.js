@@ -154,7 +154,7 @@ export class DriveView {
     const render = () => {
       const c = b.cfg;
       const folderId = b.backupFolderId();
-      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi folder di perangkat ini ke “Backup Dari Perangkat › nama perangkat › nama folder” di drive. Searah: secara bawaan backup tidak menghapus file di drive.')];
+      const rows = [h('p', { class: 'modal-text' }, 'Menyalin isi satu atau beberapa folder di perangkat ini ke “Backup Dari Perangkat › nama perangkat › nama folder” di drive. Searah: secara bawaan backup tidak menghapus file di drive.')];
       if (supportsFolderWatch()) {
         const toggle = h('input', { type: 'checkbox', checked: c.enabled, onchange: (e) => run(() => (e.target.checked ? b.enable() : b.disable())) });
         rows.push(h('label', { class: 'field-check' }, toggle, h('span', null, ' Backup otomatis')));
@@ -167,7 +167,15 @@ export class DriveView {
           rows.push(
             h('label', { class: 'field-label', for: 'bk-device' }, 'Nama perangkat ini'),
             h('input', { class: 'input', id: 'bk-device', value: c.device, onchange: (e) => b.setOptions({ device: e.target.value }) }),
-            h('p', { class: 'muted' }, `Hasil: Backup Dari Perangkat › ${c.device} › ${c.name}`),
+            h('p', { class: 'field-label' }, `Folder yang dipantau (${c.folders.length})`),
+            ...c.folders.map((f) =>
+              h(
+                'div',
+                { class: 'backup-folder' },
+                h('span', { class: 'backup-folder-path' }, `Backup Dari Perangkat › ${c.device} › ${f.name}`),
+                h('button', { class: 'btn btn-text', 'aria-label': `Berhenti memantau ${f.name}`, onclick: () => run(() => b.removeFolder(f.key)) }, 'Hapus'),
+              ),
+            ),
             every,
             openCheck(),
             h(
@@ -185,13 +193,14 @@ export class DriveView {
                 )
               : null,
             h('p', { class: 'backup-status' }, statusText()),
+            b.status.warn ? h('p', { class: 'backup-warn' }, b.status.warn) : null,
             h(
               'div',
               { class: 'backup-actions' },
               b.status.state === 'needs-permission'
                 ? h('button', { class: 'btn btn-primary', onclick: () => run(() => b.resume({ ask: true })) }, 'Izinkan akses')
                 : h('button', { class: 'btn btn-outline', onclick: () => run(() => b.scan()) }, 'Cadangkan sekarang'),
-              h('button', { class: 'btn btn-text', onclick: () => run(() => b.enable()) }, 'Ganti folder'),
+              h('button', { class: 'btn btn-text', onclick: () => run(() => b.addFolder()) }, 'Tambah folder'),
             ),
             h('p', { class: 'muted share-hint' }, 'Berjalan selama T-Drive terbuka di tab ini. Kalau kamu menghapus file di drive tapi masih ada di perangkat, file itu diunggah lagi.'),
           );

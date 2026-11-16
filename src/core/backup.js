@@ -53,9 +53,9 @@ async function kv(mode, fn) {
   });
 }
 const handleStore = {
-  get: () => kv('readonly', (s) => s.get('dir')),
-  set: (h) => kv('readwrite', (s) => s.put(h, 'dir')),
-  del: () => kv('readwrite', (s) => s.delete('dir')),
+  get: (key = 'dir') => kv('readonly', (s) => s.get(key)),
+  set: (h, key = 'dir') => kv('readwrite', (s) => s.put(h, key)),
+  del: (key = 'dir') => kv('readwrite', (s) => s.delete(key)),
 };
 
 /** Recursively list files: [{ path: 'a/b/c.jpg', handle }] (hidden, temporary and dependency folders skipped). */
@@ -96,9 +96,11 @@ export class BackupManager extends EventTarget {
     this.storage = storage;
     this.store = store || (globalThis.indexedDB ? handleStore : null);
     this.picker = picker || (() => globalThis.showDirectoryPicker({ id: 'tdrive-backup', mode: 'read' }));
-    this.cfg = { enabled: false, name: '', device: '', open: false, mirrorDelete: false, intervalMin: 15, last: 0, ...this.load() };
+    this.cfg = { enabled: false, name: '', folders: [], device: '', open: false, mirrorDelete: false, intervalMin: 15, last: 0, ...this.load() };
     if (!this.cfg.device) this.cfg.device = guessDeviceName();
-    this.handle = null;
+    // single-folder setups saved by earlier versions become a one-entry list
+    if (!this.cfg.folders?.length) this.cfg.folders = this.cfg.name ? [{ key: 'dir', name: this.cfg.name }] : [];
+    this.handles = new Map(); // folder key -> FileSystemDirectoryHandle
     this.status = { state: 'off', found: 0, queued: 0, skipped: 0, error: '' };
     this.timer = null;
     this.scanning = false;
@@ -134,28 +136,51 @@ export class BackupManager extends EventTarget {
     this.emit();
   }
 
+  /** The first watched folder (kept for callers that only know one). */
+  get handle() {
+    const f = this.cfg.folders[0];
+    return (f && this.handles.get(f.key)) || null;
+  }
+  set handle(h) {
+    if (!h) return this.handles.clear();
+    const f = this.cfg.folders[0];
+    this.handles.set(f ? f.key : 'dir', h);
+  }
+
   /** Called once after the drive is open: continue a backup enabled in an earlier session. */
   async init() {
     if (!this.cfg.enabled) return this.set('off');
-    try {
-      this.handle = (await this.store?.get()) || null;
-    } catch {
-      this.handle = null;
+    const kept = [];
+    for (const f of this.cfg.folders) {
+      let h = null;
+      try {
+        h = (await this.store?.get(f.key)) || null;
+      } catch {}
+      if (h) {
+        this.handles.set(f.key, h);
+        kept.push(f);
+      }
     }
-    if (!this.handle) {
+    this.cfg.folders = kept;
+    if (!kept.length) {
       this.cfg.enabled = false;
       this.save();
       return this.set('off');
     }
+    this.save();
     await this.resume();
   }
 
   /** Permission for a stored handle must be re-granted by a click after a reload (browser rule). */
   async resume({ ask = false } = {}) {
-    if (!this.handle) return;
-    let perm = await this.handle.queryPermission?.({ mode: 'read' });
-    if (perm !== 'granted' && ask) perm = await this.handle.requestPermission?.({ mode: 'read' });
-    if (perm && perm !== 'granted') return this.set('needs-permission');
+    if (!this.handles.size) return;
+    let ok = true;
+    for (const h of this.handles.values()) {
+      let perm = await h.queryPermission?.({ mode: 'read' });
+      if (perm !== 'granted' && ask) perm = await h.requestPermission?.({ mode: 'read' });
+      if (perm && perm !== 'granted') ok = false;
+    }
+    if (!ok) return this.set('needs-permission');
     this.startTimer();
     return this.scan();
   }
@@ -174,22 +199,46 @@ export class BackupManager extends EventTarget {
     this.stopTimer();
   }
 
-  /** Turn on: ask for the folder (must run from a click), then start scanning. */
-  async enable() {
+  /** Watch one more folder: ask for it (must run from a click), then scan. The first call also turns the backup on. */
+  async addFolder() {
     const handle = await this.picker();
-    this.handle = handle;
-    await this.store?.set(handle);
-    Object.assign(this.cfg, { enabled: true, name: handle.name });
+    for (const h of this.handles.values()) {
+      if (h === handle || (await h.isSameEntry?.(handle).catch(() => false))) throw new Error('Folder ini sudah dipantau.');
+    }
+    const taken = new Set(this.cfg.folders.map((f) => f.name.toLowerCase()));
+    let name = handle.name;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${handle.name} (${n})`; // two folders with the same name
+    const key = this.cfg.folders.length ? 'f' + Date.now().toString(36) : 'dir';
+    this.handles.set(key, handle);
+    await this.store?.set(handle, key);
+    this.cfg.folders.push({ key, name });
+    Object.assign(this.cfg, { enabled: true, name: this.cfg.folders[0].name });
     this.save();
     this.startTimer();
     return this.scan();
+  }
+  enable() {
+    return this.addFolder();
+  }
+
+  /** Stop watching one folder; what is already in the drive stays. */
+  async removeFolder(key) {
+    this.cfg.folders = this.cfg.folders.filter((f) => f.key !== key);
+    this.handles.delete(key);
+    await this.store?.del(key).catch(() => {});
+    if (!this.cfg.folders.length) return this.disable();
+    this.cfg.name = this.cfg.folders[0].name;
+    this.save();
+    this.emit();
   }
 
   async disable() {
     this.stopTimer();
     this.cfg.enabled = false;
-    this.handle = null;
-    await this.store?.del().catch(() => {});
+    for (const f of this.cfg.folders) await this.store?.del(f.key).catch(() => {});
+    this.cfg.folders = [];
+    this.cfg.name = '';
+    this.handles.clear();
     this.save();
     this.set('off');
   }
@@ -209,59 +258,82 @@ export class BackupManager extends EventTarget {
   }
 
   /** The drive folder holding the copy of the watched folder (undefined until the first upload). */
-  backupFolderId() {
+  backupFolderId(name = this.cfg.folders[0]?.name ?? this.cfg.name) {
     const ix = this.drive.index;
     let cur = ROOT;
-    for (const n of [BACKUP_FOLDER, this.cfg.device, this.cfg.name]) {
+    for (const n of [BACKUP_FOLDER, this.cfg.device, name]) {
       cur = ix.children(cur).find((i) => i.type === 'folder' && i.name === n)?.id;
       if (!cur) return undefined;
     }
     return cur;
   }
 
-  /** Scan the watched folder and queue what is new or changed. */
+  /** Scan the watched folders and queue what is new or changed. */
   async scan() {
-    if (this.scanning || !this.handle) return;
+    if (this.scanning || !this.handles.size) return;
     if (this.uploader.active) return void (this.pending = true);
     this.scanning = true;
-    this.set('scanning', { stage: 'Membaca folder', found: 0 });
+    const multi = this.cfg.folders.length > 1;
+    const total = { found: 0, queued: 0, skipped: 0, changed: 0, trashed: 0 };
+    const held = [];
+    const problems = [];
+    let denied = false;
     try {
-      const walkErrors = [];
-      const found = await walk(this.handle, '', [], (n) => this.set('scanning', { stage: 'Membaca folder', found: n }), walkErrors);
-      this.set('scanning', { stage: 'Membaca info file', found: found.length });
-      const entries = [];
-      let n = 0;
-      let failed = walkErrors.length; // an incomplete listing must never trigger mirror-delete
-      await pool(found, 16, async (f) => {
+      for (const f of this.cfg.folders) {
+        const handle = this.handles.get(f.key);
+        if (!handle) continue;
+        const label = multi ? `${f.name}: ` : '';
         try {
-          entries.push({ path: f.path, file: await f.handle.getFile() });
-        } catch {
-          failed++; // vanished or locked while scanning
+          this.set('scanning', { stage: label + 'Membaca folder', found: total.found });
+          const walkErrors = [];
+          const found = await walk(handle, '', [], (n) => this.set('scanning', { stage: label + 'Membaca folder', found: total.found + n }), walkErrors);
+          this.set('scanning', { stage: label + 'Membaca info file', found: total.found + found.length });
+          const entries = [];
+          let n = 0;
+          let failed = walkErrors.length; // an incomplete listing must never trigger mirror-delete
+          await pool(found, 16, async (x) => {
+            try {
+              entries.push({ path: x.path, file: await x.handle.getFile() });
+            } catch {
+              failed++; // vanished or locked while scanning
+            }
+            if (++n % 200 === 0) this.set('scanning', { stage: label + 'Membaca info file', found: total.found + found.length, done: n });
+          });
+          this.set('scanning', { stage: label + 'Membandingkan dengan drive', found: total.found + entries.length });
+          await tick();
+          const r = this.queue(entries, [this.cfg.device, f.name]);
+          // optional: files that vanished from the device go to the Trash (never deleted for good)
+          const m = this.cfg.mirrorDelete ? this.mirror(entries, failed, f.name) : { trashed: 0, held: null };
+          total.found += entries.length;
+          total.queued += r.queued;
+          total.skipped += r.skipped;
+          total.changed += r.changed;
+          total.trashed += m.trashed;
+          if (m.held) held.push(m.held);
+        } catch (e) {
+          if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') denied = true;
+          else if (e?.name === 'NotFoundError') problems.push(`Folder “${f.name}” tidak ditemukan (dihapus, dipindah atau diganti nama). Hapus dari daftar atau pilih lagi.`);
+          else problems.push(`“${f.name}”: ${e?.message || e}`);
         }
-        if (++n % 200 === 0) this.set('scanning', { stage: 'Membaca info file', found: found.length, done: n });
-      });
-      this.set('scanning', { stage: 'Membandingkan dengan drive', found: entries.length });
-      await tick();
-      const r = this.queue(entries, [this.cfg.device, this.cfg.name]);
-      // optional: files that vanished from the device go to the Trash (never deleted for good)
-      const m = this.cfg.mirrorDelete ? this.mirror(entries, failed) : { trashed: 0, held: null };
+      }
+      if (denied) return this.set('needs-permission');
+      if (problems.length === this.cfg.folders.length) return this.set('error', { error: problems.join(' ') });
       this.cfg.last = Date.now();
       this.save();
-      this.set('idle', { found: entries.length, queued: r.queued, skipped: r.skipped, trashed: m.trashed, held: m.held });
-      if (r.queued || m.trashed) this.dispatchEvent(new CustomEvent('queued', { detail: { ...r, trashed: m.trashed } }));
-      return { ...r, trashed: m.trashed, held: m.held };
+      const mergedHeld = held.length ? { ids: held.flatMap((x) => x.ids), total: held.reduce((a, x) => a + x.total, 0), empty: held.every((x) => x.empty) } : null;
+      this.set('idle', { found: total.found, queued: total.queued, skipped: total.skipped, trashed: total.trashed, held: mergedHeld, warn: problems.join(' ') });
+      if (total.queued || total.trashed) this.dispatchEvent(new CustomEvent('queued', { detail: { queued: total.queued, skipped: total.skipped, changed: total.changed, trashed: total.trashed } }));
+      return { queued: total.queued, skipped: total.skipped, changed: total.changed, trashed: total.trashed, held: mergedHeld };
     } catch (e) {
-      const denied = e?.name === 'NotAllowedError' || e?.name === 'SecurityError';
-      const gone = e?.name === 'NotFoundError' ? 'Folder yang dipantau tidak ditemukan (dihapus, dipindah atau diganti namanya). Tekan “Ganti folder”.' : null;
-      this.set(denied ? 'needs-permission' : 'error', { error: gone || e?.message || String(e) });
+      this.set('error', { error: e?.message || String(e) });
     } finally {
       this.scanning = false;
     }
   }
 
   /** Backed-up files (in this device folder's copy) that no longer exist on the device. */
-  staleFiles(entries) {
-    const base = this.backupFolderId();
+  staleFiles(entries, name) {
+    const base = this.backupFolderId(name);
     if (!base) return { stale: [], total: 0 };
     const ix = this.drive.index;
     const seen = new Set(entries.map((e) => e.path.toLowerCase())); // case-insensitive: never trash over a case change
@@ -277,9 +349,9 @@ export class BackupManager extends EventTarget {
   }
 
   /** Move vanished files to the Trash, with guards against wiping the backup by mistake. */
-  mirror(entries, failed) {
+  mirror(entries, failed, name) {
     if (failed) return { trashed: 0, held: null }; // an incomplete scan proves nothing is gone
-    const { stale, total } = this.staleFiles(entries);
+    const { stale, total } = this.staleFiles(entries, name);
     if (!stale.length) return { trashed: 0, held: null };
     // empty folder (wrong pick, drive unplugged) or a mass vanish: ask before trashing anything
     if (!entries.length || (stale.length > 20 && stale.length > total / 2)) return { trashed: 0, held: { ids: stale, total, empty: !entries.length } };

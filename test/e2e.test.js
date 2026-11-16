@@ -772,4 +772,50 @@ describe('end to end with fake Telegram', () => {
     expect(f.name).toBe('v.bin');
     expect(await new Reader(tg).readAll(f)).toEqual(data);
   }, 60000);
+
+  it('backup watches several folders, each under its own name, and one can be removed', async () => {
+    const { BackupManager } = await import('../src/core/backup.js');
+    const tg = new FakeTg();
+    const store = new DriveStore(tg);
+    await store.create('pw');
+    const up = new Uploader(tg, store);
+    const mkDir = (name, files) => ({
+      kind: 'directory',
+      name,
+      async *values() { for (const f of files) yield { kind: 'file', name: f, getFile: async () => new File([f], f, { lastModified: 5 }) }; },
+      queryPermission: async () => 'granted',
+      isSameEntry: async (o) => o === this_,
+    });
+    const this_ = null;
+    const picks = [mkDir('airflow-local', ['a.txt', 'b.txt']), mkDir('sr-airflow-repo', ['c.txt']), mkDir('airflow-local', ['d.txt'])];
+    const kept = new Map();
+    const mem = new Map();
+    const bm = new BackupManager({
+      drive: store,
+      uploader: up,
+      storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} },
+      store: { get: async (k) => kept.get(k), set: async (h, k) => void kept.set(k, h), del: async (k) => void kept.delete(k) },
+      picker: async () => picks.shift(),
+    });
+    bm.cfg.device = 'PC';
+    await bm.addFolder();
+    await waitIdle(up);
+    await bm.addFolder();
+    await waitIdle(up);
+    await bm.addFolder(); // same name as the first: gets its own folder
+    await waitIdle(up);
+    expect(bm.cfg.folders.map((f) => f.name)).toEqual(['airflow-local', 'sr-airflow-repo', 'airflow-local (2)']);
+    const names = (n) => store.index.children(bm.backupFolderId(n)).map((i) => i.name).sort();
+    expect(names('airflow-local')).toEqual(['a.txt', 'b.txt']);
+    expect(names('sr-airflow-repo')).toEqual(['c.txt']);
+    expect(names('airflow-local (2)')).toEqual(['d.txt']);
+
+    await bm.removeFolder(bm.cfg.folders[1].key);
+    expect(bm.cfg.folders.length).toBe(2);
+    expect(names('sr-airflow-repo')).toEqual(['c.txt']); // the copy in the drive stays
+    // a reload restores every folder
+    const bm2 = new BackupManager({ drive: store, uploader: up, storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: () => {} }, store: { get: async (k) => kept.get(k), set: async () => {}, del: async () => {} } });
+    await bm2.init();
+    expect(bm2.handles.size).toBe(2);
+  }, 60000);
 });
